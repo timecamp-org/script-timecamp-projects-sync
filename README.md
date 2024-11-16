@@ -24,7 +24,7 @@ This script automates the process of synchronizing projects between Redmine and 
 
 1. Clone this repository:
    ```
-   git clone https://github.com/yourusername/script-timecamp-projects-sync.git
+   git clone https://github.com/timecamp-org/script-timecamp-projects-sync.git
    cd script-timecamp-projects-sync
    ```
 
