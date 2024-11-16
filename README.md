@@ -35,7 +35,7 @@ This script automates the process of synchronizing projects between Redmine and 
 
 3. Set up the environment variables:
    - Copy `.env.example` to `.env`
-   - Fill in your Redmine and TimeCamp API credentials in `.env`
+   - Fill in your Redmine and TimeCamp API credentials and other configuration in `.env`
 
 ## Usage
 
@@ -47,28 +47,10 @@ python sync_projects.py
 
 To set up automatic daily synchronization, you can use a task scheduler like cron (Linux/macOS) or Task Scheduler (Windows).
 
-## Configuration
-
-Edit the `.env` file to customize the script's behavior:
-
-```
-REDMINE_URL=https://your-redmine-instance.com
-REDMINE_API_KEY=your_redmine_api_key
-
-TIMECAMP_API_TOKEN=your_timecamp_api_token
-
-SYNC_INTERVAL=24
-```
-
-- `REDMINE_URL`: The URL of your Redmine instance
-- `REDMINE_API_KEY`: Your Redmine API key
-- `TIMECAMP_API_TOKEN`: Your TimeCamp API token
-- `SYNC_INTERVAL`: Sync interval in hours (default is 24)
-
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License.
