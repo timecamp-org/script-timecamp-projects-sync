@@ -52,11 +52,27 @@ def create_timecamp_project(name, project_id):
     response.raise_for_status()
     return response.json()
 
+def archive_timecamp_project(task_id):
+    url = f"https://app.timecamp.com/third_party/api/tasks"
+    headers = {
+        'Accept': 'application/json',
+        'Authorization': f'Bearer {TIMECAMP_API_TOKEN}',
+        'Content-Type': 'application/json'
+    }
+    data = {
+        'archived': 1,
+        'task_id': task_id
+    }
+    response = requests.put(url, headers=headers, json=data)
+    response.raise_for_status()
+    return response.json()
+
 def sync_projects():
     redmine_projects = get_redmine_projects()
     timecamp_projects = get_timecamp_projects()
 
     timecamp_project_names = {project['name']: project for project in timecamp_projects}
+    active_redmine_project_ids = {str(project.id) for project in redmine_projects}
 
     for redmine_project in redmine_projects:
         if redmine_project.name not in timecamp_project_names:
@@ -64,6 +80,14 @@ def sync_projects():
             create_timecamp_project(redmine_project.name, redmine_project.id)
         else:
             print(f"Project already exists in TimeCamp: {redmine_project.name}")
+
+    for timecamp_project in timecamp_projects:
+        external_task_id = timecamp_project.get('external_task_id')
+        if external_task_id and isinstance(external_task_id, str) and external_task_id.startswith('redmine_'):
+            redmine_id = external_task_id.split('_')[1]
+            if redmine_id not in active_redmine_project_ids and not timecamp_project.get('archived'):
+                print(f"Archiving TimeCamp project: {timecamp_project['name']}")
+                archive_timecamp_project(timecamp_project['task_id'])
 
     print("Synchronization complete.")
 
