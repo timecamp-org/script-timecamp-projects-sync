@@ -23,7 +23,6 @@ def get_timecamp_projects():
     headers = {'Accept': 'application/json', 'Authorization': f'Bearer {TIMECAMP_API_TOKEN}'}
     response = requests.get(url, headers=headers)
     response.raise_for_status()
-    # print(response.json())
     data = response.json()
     # Check if the response is a dictionary
     if isinstance(data, dict):
@@ -71,11 +70,12 @@ def sync_projects():
     redmine_projects = get_redmine_projects()
     timecamp_projects = get_timecamp_projects()
 
-    timecamp_project_names = {project['name']: project for project in timecamp_projects}
-    active_redmine_project_ids = {str(project.id) for project in redmine_projects}
+    timecamp_project_ids = {project.get('external_task_id'): project for project in timecamp_projects}
+    active_redmine_project_ids = {f'redmine_{project.id}' for project in redmine_projects}
 
     for redmine_project in redmine_projects:
-        if redmine_project.name not in timecamp_project_names:
+        external_task_id = f'redmine_{redmine_project.id}'
+        if external_task_id not in timecamp_project_ids:
             print(f"Creating new TimeCamp project: {redmine_project.name}")
             create_timecamp_project(redmine_project.name, redmine_project.id)
         else:
@@ -84,8 +84,7 @@ def sync_projects():
     for timecamp_project in timecamp_projects:
         external_task_id = timecamp_project.get('external_task_id')
         if external_task_id and isinstance(external_task_id, str) and external_task_id.startswith('redmine_'):
-            redmine_id = external_task_id.split('_')[1]
-            if redmine_id not in active_redmine_project_ids and not timecamp_project.get('archived'):
+            if external_task_id not in active_redmine_project_ids and not timecamp_project.get('archived'):
                 print(f"Archiving TimeCamp project: {timecamp_project['name']}")
                 archive_timecamp_project(timecamp_project['task_id'])
 
