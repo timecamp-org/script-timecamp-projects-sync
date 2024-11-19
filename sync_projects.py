@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 from redminelib import Redmine
 import requests
+from redminelib.exceptions import ForbiddenError
 
 # Load environment variables
 load_dotenv()
@@ -49,7 +50,17 @@ def create_timecamp_project(name, project_id):
     }
     response = requests.post(url, headers=headers, json=data)
     response.raise_for_status()
-    return response.json()
+    
+    # Check if the response is a dictionary with a single key-value pair
+    if isinstance(response.json(), dict) and len(response.json()) == 1:
+        # Extract the value from the dictionary
+        project_data = next(iter(response.json().values()))
+        if 'task_id' in project_data:
+            return project_data
+    
+    # If the expected structure is not found, raise an exception
+    raise ValueError(f"Unexpected response format from TimeCamp API: {response.json()}")
+
 
 def create_timecamp_task(name, project_id, task_id):
     url = "https://app.timecamp.com/third_party/api/tasks"
@@ -115,15 +126,19 @@ def sync_projects_and_tasks():
             timecamp_project_id = timecamp_projects[external_project_id]['task_id']
 
         # Sync tasks for this project
-        redmine_tasks = get_redmine_tasks(redmine_project.id)
-        for redmine_task in redmine_tasks:
-            external_task_id = f'redmine_task_{redmine_task.id}'
-            open_redmine_task_ids.add(external_task_id)
-            if external_task_id not in timecamp_tasks:
-                print(f"Creating new TimeCamp task: {redmine_task.subject}")
-                create_timecamp_task(redmine_task.subject, timecamp_project_id, redmine_task.id)
-            else:
-                print(f"Task already exists in TimeCamp: {redmine_task.subject}")
+        try:
+            redmine_tasks = get_redmine_tasks(redmine_project.id)
+            for redmine_task in redmine_tasks:
+                external_task_id = f'redmine_task_{redmine_task.id}'
+                open_redmine_task_ids.add(external_task_id)
+                if external_task_id not in timecamp_tasks:
+                    print(f"Creating new TimeCamp task: {redmine_task.subject}")
+                    create_timecamp_task(redmine_task.subject, timecamp_project_id, redmine_task.id)
+                else:
+                    print(f"Task already exists in TimeCamp: {redmine_task.subject}")
+        except ForbiddenError:
+            print(f"Skipping tasks for project {redmine_project.name} due to insufficient permissions")
+            continue
 
     # print(open_redmine_task_ids)
     # Archive TimeCamp tasks that are not open in Redmine
