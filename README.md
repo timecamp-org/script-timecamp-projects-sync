@@ -11,8 +11,8 @@ This script automates the process of synchronizing projects between Redmine and 
 
 - Fetches projects from Redmine
 - Updates existing projects in TimeCamp
-- Creates new projects in TimeCamp if they don't exist
-- Runs automatically on a daily schedule
+- Creates new projects and tasks in TimeCamp if they don't exist
+- Exports time entries from TimeCamp to Redmine for a specified date range
 
 ## Prerequisites
 
@@ -43,6 +43,7 @@ To run the script manually:
 
 ```
 python sync_projects.py
+python export_time_entries.py 2024-11-15 2024-11-20
 ```
 
 To set up automatic daily synchronization, you can use a task scheduler like cron (Linux/macOS) or Task Scheduler (Windows).

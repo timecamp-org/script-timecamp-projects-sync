@@ -61,7 +61,6 @@ def create_timecamp_project(name, project_id):
     # If the expected structure is not found, raise an exception
     raise ValueError(f"Unexpected response format from TimeCamp API: {response.json()}")
 
-
 def create_timecamp_task(name, project_id, task_id):
     url = "https://app.timecamp.com/third_party/api/tasks"
     headers = {
@@ -92,7 +91,6 @@ def archive_timecamp_project(task_id):
     response = requests.put(url, headers=headers, json=data)
     response.raise_for_status()
     return response.json()
-
 
 def get_redmine_tasks(project_id):
     redmine = Redmine(REDMINE_URL, key=REDMINE_API_KEY)
