@@ -28,8 +28,15 @@ class Redmine:
         return user_mapping
 
     def create_time_entry(self, data: dict) -> None:
-        if 'addons_external_id' in data:
+        if 'addons_external_id' not in data or not data['addons_external_id'].startswith('redmine_'):
+            print(f"Ignoring entry {data['id']}: No valid addons_external_id")
+            return
+
+        try:
             data['task_id'] = self.extract_id_from_addons_external_id(data['addons_external_id'])
+        except ValueError as e:
+            print(f"Ignoring entry {data['id']}: {str(e)}")
+            return
 
         duration_seconds = int(data['duration'])
         
