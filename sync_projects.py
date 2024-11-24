@@ -157,7 +157,24 @@ def sync_projects_and_tasks():
 
     print("Synchronization complete.")
 
+def show_projects_and_tasks():
+    redmine_projects = get_redmine_projects()
+
+    print("Redmine Projects:")
+    for project in redmine_projects:
+        print(f"ID: {project.id}, Name: {project.name}")
+
+    for project in redmine_projects:
+        print(f"Tasks for project {project.name}:")
+        try:
+            redmine_tasks = get_redmine_tasks(project.id)
+            for task in redmine_tasks:
+                print(f"ID: {task.id}, Subject: {task.subject}")
+        except ForbiddenError:
+            continue
+
 if __name__ == "__main__":
     print(f"Starting synchronization at {datetime.now()}")
     sync_projects_and_tasks()
+    # show_projects_and_tasks()
     print(f"Synchronization finished at {datetime.now()}")

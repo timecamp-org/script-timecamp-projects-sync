@@ -22,6 +22,7 @@ class Redmine:
         user_mapping = {}
         for timecamp_user in timecamp_users:
             for redmine_user in redmine_users:
+                # print(f"{redmine_user.mail} {redmine_user.id}")
                 if timecamp_user['email'].lower() == redmine_user.mail.lower():
                     user_mapping[timecamp_user['user_id']] = redmine_user.id
                     break
@@ -33,7 +34,7 @@ class Redmine:
             return
 
         try:
-            data['task_id'] = self.extract_id_from_addons_external_id(data['addons_external_id'])
+            external_id, id_type = self.extract_id_from_addons_external_id(data['addons_external_id'])
         except ValueError as e:
             print(f"Ignoring entry {data['id']}: {str(e)}")
             return
@@ -47,16 +48,22 @@ class Redmine:
         
         comment = f"[tc:{data['id']}] {data['description']}"
 
-        self.redmine.time_entry.create(
-            issue_id=data['task_id'],
-            spent_on=data['date'],
-            hours=duration_seconds / 3600,  # Convert seconds to hours
-            activity_id=self.cfg['REDMINE_ACTIVITY_ID'],
-            comments=comment,
-            user_id=redmine_user_id
-        )
+        time_entry_data = {
+            'spent_on': data['date'],
+            'hours': duration_seconds / 3600,  # Convert seconds to hours
+            'activity_id': self.cfg['REDMINE_ACTIVITY_ID'],
+            'comments': comment,
+            'user_id': redmine_user_id
+        }
 
-        print(f"Created time entry for user {redmine_user_id} on task {data['task_id']} on {data['date']}")
+        if id_type == 'issue':
+            time_entry_data['issue_id'] = external_id
+        elif id_type == 'project':
+            time_entry_data['project_id'] = external_id
+
+        self.redmine.time_entry.create(**time_entry_data)
+
+        print(f"Created time entry for user {redmine_user_id} on {id_type} {external_id} on {data['date']}")
 
     # def update_time_entry(self, time_entry_id: int, data: dict) -> None:
     #     self.redmine.time_entry.update(
@@ -71,11 +78,11 @@ class Redmine:
     # def delete_time_entry(self, time_entry_id: int) -> None:
     #     self.redmine.time_entry.delete(time_entry_id)
 
-    def extract_id_from_addons_external_id(self, addons_external_id: str) -> int:
+    def extract_id_from_addons_external_id(self, addons_external_id: str) -> tuple:
         if addons_external_id.startswith('redmine_task_'):
-            return int(addons_external_id.split('_')[-1])
+            return int(addons_external_id.split('_')[-1]), 'issue'
         elif addons_external_id.startswith('redmine_'):
-            return int(addons_external_id.split('_')[-1])
+            return int(addons_external_id.split('_')[-1]), 'project'
         else:
             raise ValueError(f"Invalid addons_external_id format: {addons_external_id}")
 
@@ -133,6 +140,7 @@ class API:
         }
         response = requests.get(url, headers=headers, params=querystring)
         entries = response.json()
+        # print(entries)
         # for entry in entries:
         #     if 'addons_external_id' in entry:
         #         entry['task_id'] = extract_id_from_external_task_id(entry['addons_external_id'])
@@ -173,6 +181,7 @@ class API:
         }
 
         response = requests.get(url, headers=headers)
+        # print(response.json())
         return response.json()
 
     # def get_tasks(self) -> dict:

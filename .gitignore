@@ -16,3 +16,4 @@ env/
 
 # Logs
 *.log
+.temp*
