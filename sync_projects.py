@@ -69,7 +69,7 @@ def create_timecamp_task(name, project_id, task_id):
         'Content-Type': 'application/json'
     }
     data = {
-        'name': name,
+        'name': f'{task_id} {name}',
         'parent_id': project_id,
         'external_task_id': f'redmine_task_{task_id}'
     }
