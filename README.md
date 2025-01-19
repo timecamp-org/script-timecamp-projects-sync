@@ -1,4 +1,4 @@
-
+cbot
 # script-timecamp-projects-sync
 
 A script to synchronize projects from Redmine to TimeCamp on a daily basis.
