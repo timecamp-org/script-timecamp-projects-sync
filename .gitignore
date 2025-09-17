@@ -17,3 +17,5 @@ env/
 # Logs
 *.log
 .temp*
+
+tasks.json
