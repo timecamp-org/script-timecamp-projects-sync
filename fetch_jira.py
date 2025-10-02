@@ -38,7 +38,7 @@ class JiraClient:
     
     def get_issues_for_project(self, project_key: str) -> List[Dict[str, Any]]:
         """
-        Get all issues for a specific project
+        Get all active issues for a specific project (excludes Done, Closed, Resolved, Completed)
         
         Args:
             project_key: The project key (e.g., 'TCD')
@@ -47,15 +47,19 @@ class JiraClient:
             List of issues with their details
         """
         try:
-            # Fetch all issues for the project
+            # Fetch only active issues for the project
+            # Exclude common completed statuses
             # Using pagination to handle large projects
             all_issues = []
             start_at = 0
             max_results = 100
             
+            # JQL to exclude completed statuses
+            jql = f'project = {project_key} AND status NOT IN (Done, Closed, Resolved, Completed)'
+            
             while True:
                 issues = self.jira.search_issues(
-                    f'project = {project_key}',
+                    jql,
                     startAt=start_at,
                     maxResults=max_results,
                     expand='names'
@@ -206,10 +210,12 @@ class JiraFetcher:
                         'parent_id': org_id
                     })
                     
-                    # Get all issues for the project
+                    # Get all active issues for the project
                     issues = client.get_issues_for_project(project['key'])
                     
                     # Create issue task_ids and parent mapping
+                    # Store active issue keys for parent validation
+                    active_issue_keys = {issue['key'] for issue in issues}
                     issue_key_to_task_id = {}
                     for issue in issues:
                         issue_task_id = f"{org_id}_proj_{project['key']}_{issue['key']}"
@@ -226,13 +232,17 @@ class JiraFetcher:
                         if issue['parent']:
                             # Parent is another issue
                             parent_key = issue['parent']
-                            if parent_key in issue_key_to_task_id:
+                            # Only use parent if it's active (not completed)
+                            if parent_key in active_issue_keys:
                                 parent_id = issue_key_to_task_id[parent_key]
+                            # If parent is completed, keep default (project as parent)
                         elif issue.get('epic_link'):
                             # Issue is linked to an epic
                             epic_key = issue['epic_link']
-                            if epic_key in issue_key_to_task_id:
+                            # Only use epic if it's active (not completed)
+                            if epic_key in active_issue_keys:
                                 parent_id = issue_key_to_task_id[epic_key]
+                            # If epic is completed, keep default (project as parent)
                         
                         flattened_data.append({
                             'name': issue['summary'],
