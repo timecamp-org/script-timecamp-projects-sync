@@ -41,7 +41,7 @@ def get_timecamp_tasks():
         print(f"Unexpected response format: {type(data)}")
         return []
 
-def create_timecamp_task(name, parent_id, external_task_id):
+def create_timecamp_task(name, parent_id, external_task_id, external_parent_id=None):
     """Create a new task in TimeCamp"""
     url = "https://app.timecamp.com/third_party/api/tasks"
     headers = {
@@ -61,6 +61,10 @@ def create_timecamp_task(name, parent_id, external_task_id):
         'parent_id': parent_id,
         'external_task_id': external_task_id
     }
+    
+    # Add external_parent_id if provided
+    if external_parent_id is not None:
+        data['external_parent_id'] = external_parent_id
     
     response = requests.post(url, headers=headers, json=data)
     response.raise_for_status()
@@ -99,8 +103,8 @@ def sync_hierarchical_tasks_to_timecamp():
     """Main sync function to sync hierarchical task data from tasks.json to TimeCamp"""
     
     # Load hierarchical task data from JSON file
-    azure_tasks = load_tasks_from_json()
-    if not azure_tasks:
+    source_tasks = load_tasks_from_json()
+    if not source_tasks:
         return
     
     # Get existing TimeCamp tasks
@@ -110,10 +114,10 @@ def sync_hierarchical_tasks_to_timecamp():
     timecamp_tasks_map = {}
     for entry in timecamp_entries:
         external_id = entry.get('external_task_id')
-        if external_id and external_id.startswith('sync_'):
+        if external_id:
             timecamp_tasks_map[external_id] = entry
     
-    print(f"Found {len(timecamp_tasks_map)} existing sync tasks in TimeCamp")
+    print(f"Found {len(timecamp_tasks_map)} existing tasks in TimeCamp with external IDs")
     
     # Create mapping of source task_id to TimeCamp task_id for newly created items
     source_to_timecamp_map = {}
@@ -142,30 +146,31 @@ def sync_hierarchical_tasks_to_timecamp():
         return get_hierarchy_level(parent_task, all_tasks) + 1
     
     # Add hierarchy level to each task and sort by level
-    for task in azure_tasks:
-        task['_hierarchy_level'] = get_hierarchy_level(task, azure_tasks)
+    for task in source_tasks:
+        task['_hierarchy_level'] = get_hierarchy_level(task, source_tasks)
     
     # Sort tasks by hierarchy level (parents before children)
-    azure_tasks_sorted = sorted(azure_tasks, key=lambda x: (x['_hierarchy_level'], x['task_id']))
+    sorted_tasks = sorted(source_tasks, key=lambda x: (x['_hierarchy_level'], x['task_id']))
     
     # Process all tasks in hierarchy order
-    for task in azure_tasks_sorted:
-        external_id = f"sync_{task['task_id']}"
+    for task in sorted_tasks:
+        external_id = task['task_id']
         active_external_ids.add(external_id)
         
-
-        
-        # Determine parent TimeCamp task ID
+        # Determine parent TimeCamp task ID and external parent ID
         if task['parent_id'] == 0:
             # Top-level task - parent is the configured TimeCamp task
             parent_timecamp_id = TIMECAMP_TASK_ID
+            external_parent_id = None
         else:
             # Child task - parent should be mapped from source system
             parent_timecamp_id = source_to_timecamp_map.get(task['parent_id'])
+            external_parent_id = task['parent_id']
             if not parent_timecamp_id:
                 # If parent wasn't created successfully, make this a top-level task
                 print(f"Warning: Parent task not found for {task['name']}, making it top-level")
                 parent_timecamp_id = TIMECAMP_TASK_ID
+                external_parent_id = None
         
         if external_id not in timecamp_tasks_map:
             # Determine task type for logging
@@ -176,7 +181,8 @@ def sync_hierarchical_tasks_to_timecamp():
                 new_task = create_timecamp_task(
                     name=task['name'],
                     parent_id=parent_timecamp_id,
-                    external_task_id=external_id
+                    external_task_id=external_id,
+                    external_parent_id=external_parent_id
                 )
                 source_to_timecamp_map[task['task_id']] = new_task['task_id']
                 timecamp_tasks_map[external_id] = new_task
@@ -203,7 +209,7 @@ def sync_hierarchical_tasks_to_timecamp():
     print(f"- Created: {created_tasks} new tasks")
     print(f"- Existing: {existing_tasks} tasks (no change needed)")
     print(f"- Archived: {archived_tasks} obsolete tasks")
-    print(f"- Total processed: {len(azure_tasks_sorted)} tasks")
+    print(f"- Total processed: {len(sorted_tasks)} tasks")
 
 def show_sync_preview():
     """Show a preview of what would be synced without making changes"""

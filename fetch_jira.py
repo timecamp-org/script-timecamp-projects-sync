@@ -5,6 +5,8 @@ from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 from jira import JIRA
 import hashlib
+import requests
+from requests.auth import HTTPBasicAuth
 
 # Load environment variables
 load_dotenv()
@@ -22,9 +24,13 @@ class JiraClient:
             api_token: API token for authentication
         """
         self.server = server
+        self.email = email
+        self.api_token = api_token
+        self.auth = HTTPBasicAuth(email, api_token)
         self.jira = JIRA(
             server=server,
-            basic_auth=(email, api_token)
+            basic_auth=(email, api_token),
+            options={'rest_api_version': '3'}
         )
         
     def get_projects(self) -> List[Dict[str, Any]]:
@@ -57,18 +63,44 @@ class JiraClient:
             # JQL to exclude completed statuses
             jql = f'project = {project_key} AND status NOT IN (Done, Closed, Resolved, Completed)'
             
+            # Use the new /rest/api/3/search/jql endpoint
+            url = f"{self.server}/rest/api/3/search/jql"
+            
             while True:
-                issues = self.jira.search_issues(
-                    jql,
-                    startAt=start_at,
-                    maxResults=max_results,
-                    expand='names'
+                params = {
+                    'jql': jql,
+                    'startAt': start_at,
+                    'maxResults': max_results,
+                    'fields': '*all',
+                    'expand': 'names'
+                }
+                
+                headers = {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                }
+                
+                response = requests.get(
+                    url,
+                    params=params,
+                    headers=headers,
+                    auth=self.auth
                 )
+                
+                if response.status_code != 200:
+                    print(f"Error fetching issues for project {project_key}: HTTP {response.status_code}")
+                    print(f"Response: {response.text}")
+                    break
+                
+                data = response.json()
+                issues = data.get('issues', [])
                 
                 if not issues:
                     break
                 
-                all_issues.extend([self._serialize_issue(issue) for issue in issues])
+                # Convert raw JSON issues to serialized format
+                for issue_data in issues:
+                    all_issues.append(self._serialize_issue_from_json(issue_data))
                 
                 if len(issues) < max_results:
                     break
@@ -79,6 +111,8 @@ class JiraClient:
             
         except Exception as e:
             print(f"Error fetching issues for project {project_key}: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def _serialize_project(self, project) -> Dict[str, Any]:
@@ -124,6 +158,41 @@ class JiraClient:
         if hasattr(fields, 'customfield_10014') and fields.customfield_10014:
             # Epic Link (common custom field for epic relationship)
             serialized['epic_link'] = str(fields.customfield_10014)
+        
+        return serialized
+    
+    def _serialize_issue_from_json(self, issue_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert raw JSON issue data from API to dictionary"""
+        fields = issue_data.get('fields', {})
+        
+        serialized = {
+            'id': issue_data.get('id', ''),
+            'key': issue_data.get('key', ''),
+            'issue_type': fields.get('issuetype', {}).get('name', '') if fields.get('issuetype') else '',
+            'summary': fields.get('summary', ''),
+            'status': fields.get('status', {}).get('name', '') if fields.get('status') else '',
+            'priority': fields.get('priority', {}).get('name') if fields.get('priority') else None,
+            'assignee': fields.get('assignee', {}).get('displayName') if fields.get('assignee') else None,
+            'reporter': fields.get('reporter', {}).get('displayName') if fields.get('reporter') else None,
+            'created': fields.get('created'),
+            'updated': fields.get('updated'),
+            'project_key': fields.get('project', {}).get('key', '') if fields.get('project') else '',
+            'parent': None,
+            'subtasks': []
+        }
+        
+        # Get parent issue if exists
+        if fields.get('parent'):
+            serialized['parent'] = fields['parent'].get('key')
+        
+        # Get subtasks
+        if fields.get('subtasks'):
+            serialized['subtasks'] = [subtask.get('key', '') for subtask in fields['subtasks']]
+        
+        # For Epic relationship (if using Jira Cloud/Server with Epic Link)
+        if fields.get('customfield_10014'):
+            # Epic Link (common custom field for epic relationship)
+            serialized['epic_link'] = str(fields['customfield_10014'])
         
         return serialized
 
