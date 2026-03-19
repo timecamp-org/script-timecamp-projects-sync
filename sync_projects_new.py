@@ -7,7 +7,7 @@ import requests
 # Load environment variables
 load_dotenv()
 
-TIMECAMP_API_TOKEN = os.getenv('TIMECAMP_API_TOKEN2')
+TIMECAMP_API_TOKEN = os.getenv('TIMECAMP_API_TOKEN')
 TIMECAMP_TASK_ID = os.getenv('TIMECAMP_TASK_ID')
 
 def load_tasks_from_json(filename='tasks.json'):
@@ -272,6 +272,6 @@ if __name__ == "__main__":
     if TIMECAMP_API_TOKEN and TIMECAMP_TASK_ID:
         sync_hierarchical_tasks_to_timecamp()
     else:
-        print("\nTo run actual sync, set TIMECAMP_API_TOKEN2 and TIMECAMP_TASK_ID in .env file")
+        print("\nTo run actual sync, set TIMECAMP_API_TOKEN and TIMECAMP_TASK_ID in .env file")
     
     print(f"Sync finished at {datetime.now()}") 

@@ -136,7 +136,7 @@ class API:
         }
         headers = {
             "Accept": "application/json",
-            "Authorization": f"Bearer {self.cfg['TIMECAMP_API_TOKEN2']}"
+            "Authorization": f"Bearer {self.cfg['TIMECAMP_API_TOKEN']}"
         }
         response = requests.get(url, headers=headers, params=querystring)
         entries = response.json()
@@ -154,7 +154,7 @@ class API:
 
     #     headers = {
     #         "Accept": "application/json",
-    #         "Authorization": f"Bearer {self.cfg['TIMECAMP_API_TOKEN2']}"
+    #         "Authorization": f"Bearer {self.cfg['TIMECAMP_API_TOKEN']}"
     #     }
 
     #     response = requests.get(url, headers=headers, params=querystring)
@@ -167,7 +167,7 @@ class API:
 
     #     headers = {
     #         "Accept": "application/json",
-    #         "Authorization": f"Bearer {self.cfg['TIMECAMP_API_TOKEN2']}"
+    #         "Authorization": f"Bearer {self.cfg['TIMECAMP_API_TOKEN']}"
     #     }
 
     #     response = requests.get(url, headers=headers, params=querystring)
@@ -177,7 +177,7 @@ class API:
         url = f"{self.url_base}/users"
         headers = {
             "Accept": "application/json",
-            "Authorization": f"Bearer {self.cfg['TIMECAMP_API_TOKEN2']}"
+            "Authorization": f"Bearer {self.cfg['TIMECAMP_API_TOKEN']}"
         }
 
         response = requests.get(url, headers=headers)
@@ -191,7 +191,7 @@ class API:
 
     #     headers = {
     #         "Accept": "application/json",
-    #         "Authorization": f"Bearer {self.cfg['TIMECAMP_API_TOKEN2']}"
+    #         "Authorization": f"Bearer {self.cfg['TIMECAMP_API_TOKEN']}"
     #     }
 
     #     response = requests.get(url, headers=headers, params=querystring)

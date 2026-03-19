@@ -10,7 +10,7 @@ load_dotenv()
 
 REDMINE_URL = os.getenv('REDMINE_URL')
 REDMINE_API_KEY = os.getenv('REDMINE_API_KEY')
-TIMECAMP_API_TOKEN = os.getenv('TIMECAMP_API_TOKEN2')
+TIMECAMP_API_TOKEN = os.getenv('TIMECAMP_API_TOKEN')
 TIMECAMP_TASK_ID = os.getenv('TIMECAMP_TASK_ID')
 
 def get_redmine_projects():
