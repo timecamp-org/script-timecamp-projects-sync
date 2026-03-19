@@ -31,7 +31,7 @@ To set up automatic daily synchronization, you can use a task scheduler like cro
 ```bash
 # Sync clients, projects
 python3 fetch_harvest.py
-python3 sync_projects_new.py
+python3 sync_projects.py
 
 # Export time entries for a date range
 python3 export_time_entries_harvest.py 2026-03-19 2026-03-19
@@ -41,11 +41,17 @@ python3 export_time_entries_harvest.py 2026-03-19 2026-03-19
 
 ```bash
 # Sync projects and tasks
-python3 fetch_redmine.py
-python3 sync_projects.py
+python3 fetch_redmine_and_sync.py
 
 # Export time entries for a date range
 python3 export_time_entries_redmine.py 2026-03-19 2026-03-19
+```
+
+### Azure DevOps ↔ TimeCamp Synchronization
+
+```bash
+python3 fetch_azuredevops.py
+python3 sync_projects.py
 ```
 
 ## Contributing
