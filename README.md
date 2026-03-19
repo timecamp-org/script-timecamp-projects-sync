@@ -47,10 +47,17 @@ python3 fetch_redmine_and_sync.py
 python3 export_time_entries_redmine.py 2026-03-19 2026-03-19
 ```
 
-### Azure DevOps ↔ TimeCamp Synchronization
+### Multiple Azure DevOps instances ↔ TimeCamp Synchronization
 
 ```bash
 python3 fetch_azuredevops.py
+python3 sync_projects.py
+```
+
+### Multiple Jira instances ↔ TimeCamp Synchronization
+
+```bash
+python3 fetch_jira.py
 python3 sync_projects.py
 ```
 
