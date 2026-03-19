@@ -29,9 +29,11 @@ To set up automatic daily synchronization, you can use a task scheduler like cro
 ### Harvest ↔ TimeCamp Synchronization
 
 ```bash
-# Sync clients, projects and tasks
+# Sync clients, projects
 python3 fetch_harvest.py
 python3 sync_projects_new.py
+
+# Export time entries for a date range
 python3 export_time_entries_harvest.py 2026-03-19 2026-03-19
 ```
 
@@ -39,10 +41,11 @@ python3 export_time_entries_harvest.py 2026-03-19 2026-03-19
 
 ```bash
 # Sync projects and tasks
-python sync_projects.py
+python3 fetch_redmine.py
+python3 sync_projects.py
 
 # Export time entries for a date range
-python export_time_entries.py 2024-11-15 2024-11-20
+python3 export_time_entries_redmine.py 2026-03-19 2026-03-19
 ```
 
 ## Contributing
