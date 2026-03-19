@@ -2,3 +2,4 @@ python-redmine==2.3.0
 requests==2.26.0
 python-dotenv==0.19.0
 azure-devops==7.1.0b3
+jira==3.5.0
