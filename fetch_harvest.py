@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import requests
 
 # Load environment variables
-load_dotenv()
+load_dotenv(override=True)
 
 
 class HarvestClient:

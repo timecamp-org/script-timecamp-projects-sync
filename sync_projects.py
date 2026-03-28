@@ -5,7 +5,7 @@ from datetime import datetime
 import requests
 
 # Load environment variables
-load_dotenv()
+load_dotenv(override=True)
 
 TIMECAMP_API_TOKEN = os.getenv('TIMECAMP_API_TOKEN')
 TIMECAMP_TASK_ID = os.getenv('TIMECAMP_TASK_ID')

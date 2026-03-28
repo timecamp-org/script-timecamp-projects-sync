@@ -6,7 +6,7 @@ import requests
 from redminelib.exceptions import ForbiddenError
 
 # Load environment variables
-load_dotenv()
+load_dotenv(override=True)
 
 REDMINE_URL = os.getenv('REDMINE_URL')
 REDMINE_API_KEY = os.getenv('REDMINE_API_KEY')

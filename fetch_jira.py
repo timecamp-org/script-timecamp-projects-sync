@@ -7,7 +7,7 @@ from jira import JIRA
 import hashlib
 
 # Load environment variables
-load_dotenv()
+load_dotenv(override=True)
 
 class JiraClient:
     """Client for interacting with Jira API"""

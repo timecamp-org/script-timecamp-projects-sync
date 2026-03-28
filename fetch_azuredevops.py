@@ -9,7 +9,7 @@ from azure.devops.v7_1.work_item_tracking import WorkItemTrackingClient
 from azure.devops.v7_1.core import CoreClient
 
 # Load environment variables
-load_dotenv()
+load_dotenv(override=True)
 
 class AzureDevOpsClient:
     """Client for interacting with Azure DevOps API"""
