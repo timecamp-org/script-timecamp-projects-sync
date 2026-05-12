@@ -8,13 +8,15 @@ This repository contains scripts to automate projects and tasks synchronization 
 ## Installation
 
 1. Clone this repository:
-   ```
+
+   ```bash
    git clone https://github.com/timecamp-org/script-timecamp-projects-sync.git
    cd script-timecamp-projects-sync
    ```
 
 2. Install the required dependencies:
-   ```
+
+   ```bash
    pip install -r requirements.txt
    ```
 
@@ -35,6 +37,14 @@ python3 sync_projects.py
 
 # Export time entries for a date range
 python3 export_time_entries_harvest.py 2026-03-19 2026-03-19
+```
+
+### Toggl JSON → TimeCamp Synchronization
+
+```bash
+# Convert Toggl projects export into tasks.json, then sync it
+python3 fetch_toggl_json.py projects.json
+python3 sync_projects.py
 ```
 
 ### Redmine ↔ TimeCamp Synchronization
@@ -59,6 +69,23 @@ python3 sync_projects.py
 ```bash
 python3 fetch_jira.py
 python3 sync_projects.py
+```
+
+## Helpers
+
+```bash
+# Move all root level projects/tasks as a subtask
+uv run --env-file .env --with-requirements requirements.txt python helpers/archive.py --subtask-of {task_id} --dry-run
+
+# Assign random colors to root level tasks
+python3 helpers/assign_random_apple_colors.py --dry-run
+uv run --env-file .env --with-requirements requirements.txt python helpers/assign_random_apple_colors.py --dry-run
+
+# Batch assign users to selected tasks
+uv run --env-file .env --with-requirements requirements.txt python helpers/assign_users_to_task.py --task-ids 34523534,34523535 --user-ids 364263,364264
+
+# Batch assign users to all root level tasks
+uv run --env-file .env --with-requirements requirements.txt python helpers/assign_users_to_task.py --user-ids 364263,364264
 ```
 
 ## Contributing

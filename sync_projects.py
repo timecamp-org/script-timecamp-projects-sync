@@ -10,6 +10,12 @@ load_dotenv(override=True)
 TIMECAMP_API_TOKEN = os.getenv('TIMECAMP_API_TOKEN')
 TIMECAMP_TASK_ID = os.getenv('TIMECAMP_TASK_ID')
 
+def get_timecamp_parent_task_id():
+    """Return configured parent task ID, or 0 to create tasks at root level."""
+    if not TIMECAMP_TASK_ID or TIMECAMP_TASK_ID.strip() == "0":
+        return 0
+    return TIMECAMP_TASK_ID
+
 def load_tasks_from_json(filename='tasks.json'):
     """Load hierarchical tasks from JSON file"""
     try:
@@ -158,14 +164,14 @@ def sync_hierarchical_tasks_to_timecamp():
         # Determine parent TimeCamp task ID
         if task['parent_id'] == 0:
             # Top-level task - parent is the configured TimeCamp task
-            parent_timecamp_id = TIMECAMP_TASK_ID
+            parent_timecamp_id = get_timecamp_parent_task_id()
         else:
             # Child task - parent should be mapped from source system
             parent_timecamp_id = source_to_timecamp_map.get(task['parent_id'])
             if not parent_timecamp_id:
                 # If parent wasn't created successfully, make this a top-level task
                 print(f"Warning: Parent task not found for {task['name']}, making it top-level")
-                parent_timecamp_id = TIMECAMP_TASK_ID
+                parent_timecamp_id = get_timecamp_parent_task_id()
         
         if external_id not in timecamp_tasks_map:
             # Determine task type for logging
@@ -269,9 +275,9 @@ if __name__ == "__main__":
     show_sync_preview()
     
     # Run the actual sync (only if credentials are available)
-    if TIMECAMP_API_TOKEN and TIMECAMP_TASK_ID:
+    if TIMECAMP_API_TOKEN:
         sync_hierarchical_tasks_to_timecamp()
     else:
-        print("\nTo run actual sync, set TIMECAMP_API_TOKEN and TIMECAMP_TASK_ID in .env file")
+        print("\nTo run actual sync, set TIMECAMP_API_TOKEN in .env file")
     
     print(f"Sync finished at {datetime.now()}") 
