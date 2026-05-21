@@ -71,6 +71,14 @@ python3 fetch_jira.py
 python3 sync_projects.py
 ```
 
+### Zendesk → TimeCamp Synchronization
+
+```bash
+# Convert Zendesk organizations and active tickets into tasks.json, then sync it
+python3 fetch_zendesk.py
+python3 sync_projects.py
+```
+
 ## Helpers
 
 ```bash
