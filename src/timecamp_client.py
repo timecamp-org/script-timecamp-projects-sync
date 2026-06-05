@@ -152,3 +152,28 @@ class TimeCampClient:
             "DELETE",
             f"v3/task/{task_id}/tag-list/{tag_list_id}",
         )
+
+    def get_users(self) -> List[Dict[str, Any]]:
+        data = self._request("GET", "users")
+
+        if isinstance(data, dict):
+            return list(data.values())
+        if isinstance(data, list):
+            return data
+
+        raise ValueError(f"Unexpected TimeCamp users response: {type(data)}")
+
+    def assign_users_to_task(
+        self,
+        task_id: Any,
+        user_ids: List[int],
+        role_id: int,
+    ) -> Any:
+        return self._request(
+            "PUT",
+            f"v3/projects/{task_id}/assign",
+            json={
+                "userIds": user_ids,
+                "roleId": role_id,
+            },
+        )

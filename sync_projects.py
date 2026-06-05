@@ -3,6 +3,11 @@ import json
 from dotenv import load_dotenv
 from datetime import datetime
 
+from src.assigned_users import (
+    assign_users_to_task,
+    build_assigned_user_sync_result,
+    get_task_assigned_users,
+)
 from src.mandatory_tags import (
     assign_mandatory_tags_to_task,
     ensure_mandatory_tags,
@@ -62,6 +67,7 @@ def sync_hierarchical_tasks_to_timecamp():
 
     # Ensure all mandatory tag lists/tags exist before tasks are assigned to them.
     mandatory_tag_sync = ensure_mandatory_tags(client, azure_tasks)
+    assigned_user_sync = build_assigned_user_sync_result(client, azure_tasks)
 
     source_external_ids = {
         get_source_external_task_id(task)
@@ -91,6 +97,8 @@ def sync_hierarchical_tasks_to_timecamp():
     archived_tasks = 0
     assigned_mandatory_tags = 0
     tag_assignment_errors = 0
+    assigned_users_count = 0
+    user_assignment_errors = 0
     
     print("Starting hierarchical task synchronization to TimeCamp...")
     
@@ -164,6 +172,18 @@ def sync_hierarchical_tasks_to_timecamp():
             except Exception as e:
                 tag_assignment_errors += 1
                 print(f"Error assigning mandatory tags to task {task['name']}: {e}")
+
+        if get_task_assigned_users(task):
+            try:
+                assigned_users_count += assign_users_to_task(
+                    client=client,
+                    timecamp_task_id=source_to_timecamp_map[task['task_id']],
+                    source_task=task,
+                    user_sync_result=assigned_user_sync,
+                )
+            except Exception as e:
+                user_assignment_errors += 1
+                print(f"Error assigning users to task {task['name']}: {e}")
     
     # Archive TimeCamp tasks that are no longer in source system
     for external_id, timecamp_task in timecamp_tasks_map.items():
@@ -182,6 +202,9 @@ def sync_hierarchical_tasks_to_timecamp():
     print(f"- Mandatory tags assigned/updated: {assigned_mandatory_tags}")
     if tag_assignment_errors:
         print(f"- Mandatory tag assignment errors: {tag_assignment_errors}")
+    print(f"- Users assigned: {assigned_users_count}")
+    if user_assignment_errors:
+        print(f"- User assignment errors: {user_assignment_errors}")
     print(f"- Total processed: {len(azure_tasks_sorted)} tasks")
 
 def show_sync_preview():
@@ -216,6 +239,10 @@ def show_sync_preview():
     tagged_task_count = sum(1 for task in tasks if get_task_mandatory_tags(task))
     if tagged_task_count:
         print(f"  - Tasks with mandatory tags: {tagged_task_count}")
+
+    assigned_user_task_count = sum(1 for task in tasks if get_task_assigned_users(task))
+    if assigned_user_task_count:
+        print(f"  - Tasks with assigned users: {assigned_user_task_count}")
     
     print("\nHierarchy preview:")
     
