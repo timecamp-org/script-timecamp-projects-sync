@@ -2,7 +2,13 @@ import os
 import json
 from dotenv import load_dotenv
 from datetime import datetime
-import requests
+
+from src.mandatory_tags import (
+    assign_mandatory_tags_to_task,
+    ensure_mandatory_tags,
+    get_task_mandatory_tags,
+)
+from src.timecamp_client import TimeCampClient
 
 # Load environment variables
 load_dotenv(override=True)
@@ -16,6 +22,19 @@ def get_timecamp_parent_task_id():
         return 0
     return TIMECAMP_TASK_ID
 
+def get_source_external_task_id(task):
+    """Return the TimeCamp external_task_id for a source task."""
+    if task.get('external_task_id'):
+        return str(task['external_task_id'])
+
+    task_id = str(task['task_id'])
+
+    # Monday IDs are already compatible with the native TimeCamp integration.
+    if task_id.startswith('monday_'):
+        return task_id
+
+    return f"sync_{task_id}"
+
 def load_tasks_from_json(filename='tasks.json'):
     """Load hierarchical tasks from JSON file"""
     try:
@@ -28,79 +47,6 @@ def load_tasks_from_json(filename='tasks.json'):
         print(f"Error parsing {filename}: {e}")
         return []
 
-def get_timecamp_tasks():
-    """Get all existing tasks from TimeCamp"""
-    url = "https://app.timecamp.com/third_party/api/tasks"
-    headers = {'Accept': 'application/json', 'Authorization': f'Bearer {TIMECAMP_API_TOKEN}'}
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    data = response.json()
-    
-    # Check if the response is a dictionary
-    if isinstance(data, dict):
-        # Extract the tasks from the dictionary
-        return list(data.values())
-    elif isinstance(data, list):
-        # If it's already a list, return it as is
-        return data
-    else:
-        print(f"Unexpected response format: {type(data)}")
-        return []
-
-def create_timecamp_task(name, parent_id, external_task_id):
-    """Create a new task in TimeCamp"""
-    url = "https://app.timecamp.com/third_party/api/tasks"
-    headers = {
-        'Accept': 'application/json',
-        'Authorization': f'Bearer {TIMECAMP_API_TOKEN}',
-        'Content-Type': 'application/json'
-    }
-    
-    # Ensure parent_id is integer
-    try:
-        parent_id = int(parent_id)
-    except (ValueError, TypeError):
-        raise ValueError(f"Invalid parent_id: {parent_id}")
-    
-    data = {
-        'name': name,
-        'parent_id': parent_id,
-        'external_task_id': external_task_id
-    }
-    
-    response = requests.post(url, headers=headers, json=data)
-    response.raise_for_status()
-    
-    response_data = response.json()
-    
-    # Check if the response is a dictionary with a single key-value pair
-    if isinstance(response_data, dict) and len(response_data) == 1:
-        # Extract the value from the dictionary
-        task_data = next(iter(response_data.values()))
-        if 'task_id' in task_data:
-            # Ensure we have the external_task_id in the returned data
-            task_data['external_task_id'] = external_task_id
-            return task_data
-    
-    # If the expected structure is not found, raise an exception
-    raise ValueError(f"Unexpected response format from TimeCamp API: {response_data}")
-
-def archive_timecamp_task(task_id):
-    """Archive a task in TimeCamp"""
-    url = f"https://app.timecamp.com/third_party/api/tasks"
-    headers = {
-        'Accept': 'application/json',
-        'Authorization': f'Bearer {TIMECAMP_API_TOKEN}',
-        'Content-Type': 'application/json'
-    }
-    data = {
-        'archived': 1,
-        'task_id': task_id
-    }
-    response = requests.put(url, headers=headers, json=data)
-    response.raise_for_status()
-    return response.json()
-
 def sync_hierarchical_tasks_to_timecamp():
     """Main sync function to sync hierarchical task data from tasks.json to TimeCamp"""
     
@@ -108,18 +54,30 @@ def sync_hierarchical_tasks_to_timecamp():
     azure_tasks = load_tasks_from_json()
     if not azure_tasks:
         return
+
+    client = TimeCampClient(TIMECAMP_API_TOKEN)
     
     # Get existing TimeCamp tasks
-    timecamp_entries = get_timecamp_tasks()
+    timecamp_entries = client.get_tasks()
+
+    # Ensure all mandatory tag lists/tags exist before tasks are assigned to them.
+    mandatory_tag_sync = ensure_mandatory_tags(client, azure_tasks)
+
+    source_external_ids = {
+        get_source_external_task_id(task)
+        for task in azure_tasks
+    }
     
     # Create mapping of existing TimeCamp tasks by external_task_id
     timecamp_tasks_map = {}
     for entry in timecamp_entries:
         external_id = entry.get('external_task_id')
-        if external_id and external_id.startswith('sync_'):
+        if external_id and (
+            external_id.startswith('sync_') or external_id in source_external_ids
+        ):
             timecamp_tasks_map[external_id] = entry
     
-    print(f"Found {len(timecamp_tasks_map)} existing sync tasks in TimeCamp")
+    print(f"Found {len(timecamp_tasks_map)} existing sync/source tasks in TimeCamp")
     
     # Create mapping of source task_id to TimeCamp task_id for newly created items
     source_to_timecamp_map = {}
@@ -131,6 +89,8 @@ def sync_hierarchical_tasks_to_timecamp():
     created_tasks = 0
     existing_tasks = 0
     archived_tasks = 0
+    assigned_mandatory_tags = 0
+    tag_assignment_errors = 0
     
     print("Starting hierarchical task synchronization to TimeCamp...")
     
@@ -156,10 +116,8 @@ def sync_hierarchical_tasks_to_timecamp():
     
     # Process all tasks in hierarchy order
     for task in azure_tasks_sorted:
-        external_id = f"sync_{task['task_id']}"
+        external_id = get_source_external_task_id(task)
         active_external_ids.add(external_id)
-        
-
         
         # Determine parent TimeCamp task ID
         if task['parent_id'] == 0:
@@ -179,7 +137,7 @@ def sync_hierarchical_tasks_to_timecamp():
             print(f"Creating {task_type} task: {task['name']}")
             
             try:
-                new_task = create_timecamp_task(
+                new_task = client.create_task(
                     name=task['name'],
                     parent_id=parent_timecamp_id,
                     external_task_id=external_id
@@ -194,13 +152,25 @@ def sync_hierarchical_tasks_to_timecamp():
             existing_task = timecamp_tasks_map[external_id]
             source_to_timecamp_map[task['task_id']] = existing_task['task_id']
             existing_tasks += 1
+
+        if get_task_mandatory_tags(task):
+            try:
+                assigned_mandatory_tags += assign_mandatory_tags_to_task(
+                    client=client,
+                    timecamp_task_id=source_to_timecamp_map[task['task_id']],
+                    source_task=task,
+                    tag_sync_result=mandatory_tag_sync,
+                )
+            except Exception as e:
+                tag_assignment_errors += 1
+                print(f"Error assigning mandatory tags to task {task['name']}: {e}")
     
     # Archive TimeCamp tasks that are no longer in source system
     for external_id, timecamp_task in timecamp_tasks_map.items():
         if external_id not in active_external_ids and not timecamp_task.get('archived'):
             print(f"Archiving TimeCamp task: {timecamp_task['name']}")
             try:
-                archive_timecamp_task(timecamp_task['task_id'])
+                client.archive_task(timecamp_task['task_id'])
                 archived_tasks += 1
             except Exception as e:
                 print(f"Error archiving task {timecamp_task['name']}: {e}")
@@ -209,6 +179,9 @@ def sync_hierarchical_tasks_to_timecamp():
     print(f"- Created: {created_tasks} new tasks")
     print(f"- Existing: {existing_tasks} tasks (no change needed)")
     print(f"- Archived: {archived_tasks} obsolete tasks")
+    print(f"- Mandatory tags assigned/updated: {assigned_mandatory_tags}")
+    if tag_assignment_errors:
+        print(f"- Mandatory tag assignment errors: {tag_assignment_errors}")
     print(f"- Total processed: {len(azure_tasks_sorted)} tasks")
 
 def show_sync_preview():
@@ -239,6 +212,10 @@ def show_sync_preview():
     print(f"Would sync {len(tasks)} total tasks:")
     for level in sorted(level_counts.keys()):
         print(f"  - Level {level}: {level_counts[level]} tasks")
+
+    tagged_task_count = sum(1 for task in tasks if get_task_mandatory_tags(task))
+    if tagged_task_count:
+        print(f"  - Tasks with mandatory tags: {tagged_task_count}")
     
     print("\nHierarchy preview:")
     
