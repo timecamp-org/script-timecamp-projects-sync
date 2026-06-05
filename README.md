@@ -79,6 +79,20 @@ python3 fetch_zendesk.py
 python3 sync_projects.py
 ```
 
+### Monday.com → TimeCamp Synchronization
+
+```bash
+# Convert Monday boards, groups, items and subitems into tasks.json, then sync it
+python3 fetch_mondaycom.py
+python3 sync_projects.py
+```
+
+Monday task external IDs are written as `monday_*` to match TimeCamp's native Monday.com integration.
+Set `MONDAY_MEANDATORY_TAGS=Client` to add item column values to JSON as
+`"meandatory_tags": {"Client": ["client name"]}`. Multiple column titles can be comma-separated.
+Monday people columns are exported on items/subitems as
+`"assigned_users": {"external_user_id": {"email": "...", "username": "..."}}` when available.
+
 ## Helpers
 
 ```bash
