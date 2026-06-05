@@ -177,3 +177,43 @@ class TimeCampClient:
                 "roleId": role_id,
             },
         )
+
+    def get_time_entries(
+        self,
+        start_date: Any,
+        end_date: Any,
+        user_ids: Optional[List[int]] = None,
+        opt_fields: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        params: Dict[str, Any] = {
+            "from": str(start_date),
+            "to": str(end_date),
+        }
+        if user_ids:
+            params["user_ids"] = ",".join(str(user_id) for user_id in user_ids)
+        if opt_fields:
+            params["opt_fields"] = opt_fields
+
+        data = self._request("GET", "entries", params=params)
+        if isinstance(data, list):
+            return data
+
+        raise ValueError(f"Unexpected TimeCamp entries response: {type(data)}")
+
+    def get_entry_tags(self, entry_id: Any) -> Dict[str, List[Dict[str, Any]]]:
+        data = self._request("GET", f"entries/{entry_id}/tags")
+        if isinstance(data, dict):
+            return data
+
+        raise ValueError(f"Unexpected TimeCamp entry tags response: {type(data)}")
+
+    def add_tags_to_entry(
+        self,
+        entry_id: Any,
+        tag_ids: List[int],
+    ) -> Any:
+        return self._request(
+            "PUT",
+            f"entries/{entry_id}/tags",
+            json={"tags": ",".join(str(tag_id) for tag_id in tag_ids)},
+        )

@@ -108,6 +108,10 @@ uv run --env-file .env --with-requirements requirements.txt python helpers/assig
 
 # Batch assign users to all root level tasks
 uv run --env-file .env --with-requirements requirements.txt python helpers/assign_users_to_task.py --user-ids 364263,364264
+
+# Fill missing mandatory tags from tasks.json on time entries for all account users
+uv run --env-file .env --with-requirements requirements.txt python helpers/assign_mandatory_tags_to_time_entries.py --from 2026-06-01 --to 2026-06-05 --dry-run
+uv run --env-file .env --with-requirements requirements.txt python helpers/assign_mandatory_tags_to_time_entries.py --from 2026-06-01 --to 2026-06-05
 ```
 
 ## Contributing
