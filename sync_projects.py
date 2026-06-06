@@ -1,20 +1,163 @@
 import os
 import json
-from dotenv import load_dotenv
 from datetime import datetime
-import requests
+
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:
+    load_dotenv = None
+
+from src.assigned_users import (
+    assign_users_to_task,
+    build_assigned_user_sync_result,
+    get_task_assigned_users,
+)
+from src.mandatory_tags import (
+    assign_mandatory_tags_to_task,
+    ensure_mandatory_tags,
+    get_task_mandatory_tags,
+)
+from src.timecamp_client import TimeCampClient, TimeCampRateLimitError
 
 # Load environment variables
-load_dotenv(override=True)
+if load_dotenv:
+    load_dotenv(override=True)
 
 TIMECAMP_API_TOKEN = os.getenv('TIMECAMP_API_TOKEN')
 TIMECAMP_TASK_ID = os.getenv('TIMECAMP_TASK_ID')
+TIMECAMP_SYNC_ACTIONS = os.getenv('TIMECAMP_SYNC_ACTIONS')
+TIMECAMP_MAX_MANDATORY_TAGS_TO_ADD = os.getenv('TIMECAMP_MAX_MANDATORY_TAGS_TO_ADD')
+
+DEFAULT_SYNC_ACTIONS = {
+    "tasks",
+    "archive",
+    "tags",
+    "mandatory_tags",
+    "users",
+}
+SYNC_ACTION_ORDER = (
+    "tasks",
+    "tags",
+    "mandatory_tags",
+    "users",
+    "archive",
+)
+SYNC_ACTION_DESCRIPTIONS = {
+    "tasks": "Create missing TimeCamp tasks",
+    "tags": "Create or restore mandatory tag lists and tags",
+    "mandatory_tags": "Assign mandatory tags to TimeCamp tasks",
+    "users": "Assign users to TimeCamp tasks",
+    "archive": "Archive TimeCamp tasks missing from source data",
+}
+SYNC_ACTION_ALIASES = {
+    "create_tasks": "tasks",
+    "task_creation": "tasks",
+    "archive_tasks": "archive",
+    "tag": "tags",
+    "meandatory_tags": "mandatory_tags",
+    "mandatory_tag_assignments": "mandatory_tags",
+    "user": "users",
+    "assigned_users": "users",
+    "user_assignments": "users",
+}
+
+
+def get_enabled_sync_actions():
+    """Return enabled sync action names from TIMECAMP_SYNC_ACTIONS."""
+    if not TIMECAMP_SYNC_ACTIONS:
+        return set(DEFAULT_SYNC_ACTIONS)
+
+    enabled_actions = set()
+    unknown_actions = []
+
+    for raw_action in TIMECAMP_SYNC_ACTIONS.split(","):
+        action = raw_action.strip().casefold().replace("-", "_")
+        if not action:
+            continue
+
+        action = SYNC_ACTION_ALIASES.get(action, action)
+        if action not in DEFAULT_SYNC_ACTIONS:
+            unknown_actions.append(raw_action.strip())
+            continue
+
+        enabled_actions.add(action)
+
+    if unknown_actions:
+        print(
+            "Warning: ignoring unknown TIMECAMP_SYNC_ACTIONS value(s): "
+            f"{', '.join(unknown_actions)}"
+        )
+
+    return enabled_actions
+
+
+def get_optional_env_int(value):
+    if value is None:
+        return None
+
+    normalized_value = value.strip()
+    if not normalized_value:
+        return None
+
+    try:
+        parsed_value = int(normalized_value)
+    except ValueError:
+        print(f"Warning: invalid integer env value '{value}', ignoring limit")
+        return None
+
+    if parsed_value < 0:
+        print(f"Warning: negative integer env value '{value}', ignoring limit")
+        return None
+
+    return parsed_value
+
+
+def ordered_sync_actions(actions):
+    return [action for action in SYNC_ACTION_ORDER if action in actions]
+
+
+def print_sync_action_plan(enabled_actions):
+    omitted_actions = DEFAULT_SYNC_ACTIONS - enabled_actions
+
+    print("\nSync action plan:")
+    print("Will run:")
+    if enabled_actions:
+        for action in ordered_sync_actions(enabled_actions):
+            print(f"  - {SYNC_ACTION_DESCRIPTIONS[action]}")
+    else:
+        print("  - (none)")
+
+    print("Will skip:")
+    if omitted_actions:
+        for action in ordered_sync_actions(omitted_actions):
+            print(f"  - {SYNC_ACTION_DESCRIPTIONS[action]}")
+    else:
+        print("  - (none)")
+
+
+def stop_on_rate_limit(exc):
+    print(f"Stopping sync because TimeCamp returned 429 Too Many Requests: {exc}")
+    raise SystemExit(1)
+
 
 def get_timecamp_parent_task_id():
     """Return configured parent task ID, or 0 to create tasks at root level."""
     if not TIMECAMP_TASK_ID or TIMECAMP_TASK_ID.strip() == "0":
         return 0
     return TIMECAMP_TASK_ID
+
+def get_source_external_task_id(task):
+    """Return the TimeCamp external_task_id for a source task."""
+    if task.get('external_task_id'):
+        return str(task['external_task_id'])
+
+    task_id = str(task['task_id'])
+
+    # Monday IDs are already compatible with the native TimeCamp integration.
+    if task_id.startswith('monday_'):
+        return task_id
+
+    return f"sync_{task_id}"
 
 def load_tasks_from_json(filename='tasks.json'):
     """Load hierarchical tasks from JSON file"""
@@ -28,98 +171,47 @@ def load_tasks_from_json(filename='tasks.json'):
         print(f"Error parsing {filename}: {e}")
         return []
 
-def get_timecamp_tasks():
-    """Get all existing tasks from TimeCamp"""
-    url = "https://app.timecamp.com/third_party/api/tasks"
-    headers = {'Accept': 'application/json', 'Authorization': f'Bearer {TIMECAMP_API_TOKEN}'}
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    data = response.json()
-    
-    # Check if the response is a dictionary
-    if isinstance(data, dict):
-        # Extract the tasks from the dictionary
-        return list(data.values())
-    elif isinstance(data, list):
-        # If it's already a list, return it as is
-        return data
-    else:
-        print(f"Unexpected response format: {type(data)}")
-        return []
-
-def create_timecamp_task(name, parent_id, external_task_id):
-    """Create a new task in TimeCamp"""
-    url = "https://app.timecamp.com/third_party/api/tasks"
-    headers = {
-        'Accept': 'application/json',
-        'Authorization': f'Bearer {TIMECAMP_API_TOKEN}',
-        'Content-Type': 'application/json'
-    }
-    
-    # Ensure parent_id is integer
-    try:
-        parent_id = int(parent_id)
-    except (ValueError, TypeError):
-        raise ValueError(f"Invalid parent_id: {parent_id}")
-    
-    data = {
-        'name': name,
-        'parent_id': parent_id,
-        'external_task_id': external_task_id
-    }
-    
-    response = requests.post(url, headers=headers, json=data)
-    response.raise_for_status()
-    
-    response_data = response.json()
-    
-    # Check if the response is a dictionary with a single key-value pair
-    if isinstance(response_data, dict) and len(response_data) == 1:
-        # Extract the value from the dictionary
-        task_data = next(iter(response_data.values()))
-        if 'task_id' in task_data:
-            # Ensure we have the external_task_id in the returned data
-            task_data['external_task_id'] = external_task_id
-            return task_data
-    
-    # If the expected structure is not found, raise an exception
-    raise ValueError(f"Unexpected response format from TimeCamp API: {response_data}")
-
-def archive_timecamp_task(task_id):
-    """Archive a task in TimeCamp"""
-    url = f"https://app.timecamp.com/third_party/api/tasks"
-    headers = {
-        'Accept': 'application/json',
-        'Authorization': f'Bearer {TIMECAMP_API_TOKEN}',
-        'Content-Type': 'application/json'
-    }
-    data = {
-        'archived': 1,
-        'task_id': task_id
-    }
-    response = requests.put(url, headers=headers, json=data)
-    response.raise_for_status()
-    return response.json()
-
-def sync_hierarchical_tasks_to_timecamp():
+def sync_hierarchical_tasks_to_timecamp(enabled_actions=None):
     """Main sync function to sync hierarchical task data from tasks.json to TimeCamp"""
-    
+    if enabled_actions is None:
+        enabled_actions = get_enabled_sync_actions()
+        print_sync_action_plan(enabled_actions)
+    max_mandatory_tags_to_add = get_optional_env_int(TIMECAMP_MAX_MANDATORY_TAGS_TO_ADD)
+
     # Load hierarchical task data from JSON file
     azure_tasks = load_tasks_from_json()
     if not azure_tasks:
         return
+
+    client = TimeCampClient(TIMECAMP_API_TOKEN)
     
     # Get existing TimeCamp tasks
-    timecamp_entries = get_timecamp_tasks()
+    timecamp_entries = client.get_tasks()
+
+    # Ensure all mandatory tag lists/tags exist before tasks are assigned to them.
+    mandatory_tag_sync = None
+    if "tags" in enabled_actions or "mandatory_tags" in enabled_actions:
+        mandatory_tag_sync = ensure_mandatory_tags(client, azure_tasks)
+
+    assigned_user_sync = None
+    if "users" in enabled_actions:
+        assigned_user_sync = build_assigned_user_sync_result(client, azure_tasks)
+
+    source_external_ids = {
+        get_source_external_task_id(task)
+        for task in azure_tasks
+    }
     
     # Create mapping of existing TimeCamp tasks by external_task_id
     timecamp_tasks_map = {}
     for entry in timecamp_entries:
         external_id = entry.get('external_task_id')
-        if external_id and external_id.startswith('sync_'):
+        if external_id and (
+            external_id.startswith('sync_') or external_id in source_external_ids
+        ):
             timecamp_tasks_map[external_id] = entry
     
-    print(f"Found {len(timecamp_tasks_map)} existing sync tasks in TimeCamp")
+    print(f"Found {len(timecamp_tasks_map)} existing sync/source tasks in TimeCamp")
     
     # Create mapping of source task_id to TimeCamp task_id for newly created items
     source_to_timecamp_map = {}
@@ -131,6 +223,11 @@ def sync_hierarchical_tasks_to_timecamp():
     created_tasks = 0
     existing_tasks = 0
     archived_tasks = 0
+    skipped_missing_tasks = 0
+    assigned_mandatory_tags = 0
+    tag_assignment_errors = 0
+    assigned_users_count = 0
+    user_assignment_errors = 0
     
     print("Starting hierarchical task synchronization to TimeCamp...")
     
@@ -156,30 +253,29 @@ def sync_hierarchical_tasks_to_timecamp():
     
     # Process all tasks in hierarchy order
     for task in azure_tasks_sorted:
-        external_id = f"sync_{task['task_id']}"
+        external_id = get_source_external_task_id(task)
         active_external_ids.add(external_id)
-        
 
-        
-        # Determine parent TimeCamp task ID
-        if task['parent_id'] == 0:
-            # Top-level task - parent is the configured TimeCamp task
-            parent_timecamp_id = get_timecamp_parent_task_id()
-        else:
-            # Child task - parent should be mapped from source system
-            parent_timecamp_id = source_to_timecamp_map.get(task['parent_id'])
-            if not parent_timecamp_id:
-                # If parent wasn't created successfully, make this a top-level task
-                print(f"Warning: Parent task not found for {task['name']}, making it top-level")
-                parent_timecamp_id = get_timecamp_parent_task_id()
-        
         if external_id not in timecamp_tasks_map:
+            if "tasks" not in enabled_actions:
+                skipped_missing_tasks += 1
+                continue
+
+            # Determine parent TimeCamp task ID.
+            if task['parent_id'] == 0:
+                parent_timecamp_id = get_timecamp_parent_task_id()
+            else:
+                parent_timecamp_id = source_to_timecamp_map.get(task['parent_id'])
+                if not parent_timecamp_id:
+                    print(f"Warning: Parent task not found for {task['name']}, making it top-level")
+                    parent_timecamp_id = get_timecamp_parent_task_id()
+
             # Determine task type for logging
             task_type = "top-level" if task['parent_id'] == 0 else f"level-{task['_hierarchy_level']}"
             print(f"Creating {task_type} task: {task['name']}")
             
             try:
-                new_task = create_timecamp_task(
+                new_task = client.create_task(
                     name=task['name'],
                     parent_id=parent_timecamp_id,
                     external_task_id=external_id
@@ -188,27 +284,72 @@ def sync_hierarchical_tasks_to_timecamp():
                 timecamp_tasks_map[external_id] = new_task
                 created_tasks += 1
             except Exception as e:
+                if isinstance(e, TimeCampRateLimitError):
+                    stop_on_rate_limit(e)
                 print(f"Error creating task {task['name']}: {e}")
                 continue
         else:
             existing_task = timecamp_tasks_map[external_id]
             source_to_timecamp_map[task['task_id']] = existing_task['task_id']
             existing_tasks += 1
+
+        if "mandatory_tags" in enabled_actions and get_task_mandatory_tags(task):
+            try:
+                assigned_mandatory_tags += assign_mandatory_tags_to_task(
+                    client=client,
+                    timecamp_task_id=source_to_timecamp_map[task['task_id']],
+                    source_task=task,
+                    tag_sync_result=mandatory_tag_sync,
+                    max_tags_to_add=max_mandatory_tags_to_add,
+                )
+            except Exception as e:
+                if isinstance(e, TimeCampRateLimitError):
+                    stop_on_rate_limit(e)
+                tag_assignment_errors += 1
+                print(f"Error assigning mandatory tags to task {task['name']}: {e}")
+
+        if "users" in enabled_actions and get_task_assigned_users(task):
+            try:
+                assigned_users_count += assign_users_to_task(
+                    client=client,
+                    timecamp_task_id=source_to_timecamp_map[task['task_id']],
+                    source_task=task,
+                    user_sync_result=assigned_user_sync,
+                )
+            except Exception as e:
+                if isinstance(e, TimeCampRateLimitError):
+                    stop_on_rate_limit(e)
+                user_assignment_errors += 1
+                print(f"Error assigning users to task {task['name']}: {e}")
     
     # Archive TimeCamp tasks that are no longer in source system
-    for external_id, timecamp_task in timecamp_tasks_map.items():
-        if external_id not in active_external_ids and not timecamp_task.get('archived'):
-            print(f"Archiving TimeCamp task: {timecamp_task['name']}")
-            try:
-                archive_timecamp_task(timecamp_task['task_id'])
-                archived_tasks += 1
-            except Exception as e:
-                print(f"Error archiving task {timecamp_task['name']}: {e}")
+    if "archive" in enabled_actions:
+        for external_id, timecamp_task in timecamp_tasks_map.items():
+            if external_id not in active_external_ids and not timecamp_task.get('archived'):
+                print(f"Archiving TimeCamp task: {timecamp_task['name']}")
+                try:
+                    client.archive_task(timecamp_task['task_id'])
+                    archived_tasks += 1
+                except Exception as e:
+                    if isinstance(e, TimeCampRateLimitError):
+                        stop_on_rate_limit(e)
+                    print(f"Error archiving task {timecamp_task['name']}: {e}")
     
     print(f"\nSynchronization completed successfully!")
     print(f"- Created: {created_tasks} new tasks")
     print(f"- Existing: {existing_tasks} tasks (no change needed)")
     print(f"- Archived: {archived_tasks} obsolete tasks")
+    if "tasks" not in enabled_actions:
+        print("- Task creation skipped because tasks action is disabled")
+        print(f"- Missing TimeCamp tasks skipped: {skipped_missing_tasks}")
+    if "archive" not in enabled_actions:
+        print("- Task archiving skipped because archive action is disabled")
+    print(f"- Mandatory tags assigned/updated: {assigned_mandatory_tags}")
+    if tag_assignment_errors:
+        print(f"- Mandatory tag assignment errors: {tag_assignment_errors}")
+    print(f"- Users assigned: {assigned_users_count}")
+    if user_assignment_errors:
+        print(f"- User assignment errors: {user_assignment_errors}")
     print(f"- Total processed: {len(azure_tasks_sorted)} tasks")
 
 def show_sync_preview():
@@ -239,6 +380,14 @@ def show_sync_preview():
     print(f"Would sync {len(tasks)} total tasks:")
     for level in sorted(level_counts.keys()):
         print(f"  - Level {level}: {level_counts[level]} tasks")
+
+    tagged_task_count = sum(1 for task in tasks if get_task_mandatory_tags(task))
+    if tagged_task_count:
+        print(f"  - Tasks with mandatory tags: {tagged_task_count}")
+
+    assigned_user_task_count = sum(1 for task in tasks if get_task_assigned_users(task))
+    if assigned_user_task_count:
+        print(f"  - Tasks with assigned users: {assigned_user_task_count}")
     
     print("\nHierarchy preview:")
     
@@ -270,14 +419,19 @@ def show_sync_preview():
 
 if __name__ == "__main__":
     print(f"Starting hierarchical task sync to TimeCamp at {datetime.now()}")
+    enabled_actions = get_enabled_sync_actions()
+    print_sync_action_plan(enabled_actions)
     
     # Show preview of what would be synced
     show_sync_preview()
     
     # Run the actual sync (only if credentials are available)
     if TIMECAMP_API_TOKEN:
-        sync_hierarchical_tasks_to_timecamp()
+        try:
+            sync_hierarchical_tasks_to_timecamp(enabled_actions)
+        except TimeCampRateLimitError as e:
+            stop_on_rate_limit(e)
     else:
         print("\nTo run actual sync, set TIMECAMP_API_TOKEN in .env file")
     
-    print(f"Sync finished at {datetime.now()}") 
+    print(f"Sync finished at {datetime.now()}")

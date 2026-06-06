@@ -4,6 +4,7 @@ This repository contains scripts to automate projects and tasks synchronization 
 
 - Synchronizing clients, projects and tasks into TimeCamp
 - Exporting time entries from TimeCamp
+- Synchronizing meandatory tags and assigned users
 
 ## Installation
 
@@ -31,18 +32,14 @@ To set up automatic daily synchronization, you can use a task scheduler like cro
 ### Harvest ↔ TimeCamp Synchronization
 
 ```bash
-# Sync clients, projects
 python3 fetch_harvest.py
 python3 sync_projects.py
-
-# Export time entries for a date range
 python3 export_time_entries_harvest.py 2026-03-19 2026-03-19
 ```
 
 ### Toggl JSON → TimeCamp Synchronization
 
 ```bash
-# Convert Toggl projects export into tasks.json, then sync it
 python3 fetch_toggl_json.py projects.json
 python3 sync_projects.py
 ```
@@ -50,10 +47,7 @@ python3 sync_projects.py
 ### Redmine ↔ TimeCamp Synchronization
 
 ```bash
-# Sync projects and tasks
 python3 fetch_redmine_and_sync.py
-
-# Export time entries for a date range
 python3 export_time_entries_redmine.py 2026-03-19 2026-03-19
 ```
 
@@ -74,10 +68,31 @@ python3 sync_projects.py
 ### Zendesk → TimeCamp Synchronization
 
 ```bash
-# Convert Zendesk organizations and active tickets into tasks.json, then sync it
 python3 fetch_zendesk.py
 python3 sync_projects.py
 ```
+
+### Monday.com → TimeCamp Synchronization
+
+```bash
+python3 fetch_mondaycom.py
+python3 sync_projects.py
+```
+
+### Limiting TimeCamp Sync Actions
+
+By default, `sync_projects.py` runs all actions: creating missing tasks, archiving stale
+tasks, creating/restoring mandatory tag lists and tags, assigning mandatory tags to tasks,
+and assigning users to tasks.
+
+Set `TIMECAMP_SYNC_ACTIONS` to a comma-separated list to run only selected actions:
+
+```bash
+# Only create/restore tags, assign mandatory tags, and assign users.
+TIMECAMP_SYNC_ACTIONS=tags,mandatory_tags,users uv run --env-file .env --with-requirements requirements.txt python sync_projects.py
+```
+
+Available actions are `tasks`, `archive`, `tags`, `mandatory_tags`, and `users`.
 
 ## Helpers
 
@@ -94,6 +109,10 @@ uv run --env-file .env --with-requirements requirements.txt python helpers/assig
 
 # Batch assign users to all root level tasks
 uv run --env-file .env --with-requirements requirements.txt python helpers/assign_users_to_task.py --user-ids 364263,364264
+
+# Fill missing mandatory tags from tasks.json on time entries for all account users
+uv run --env-file .env --with-requirements requirements.txt python helpers/assign_mandatory_tags_to_time_entries.py --from 2026-06-01 --to 2026-06-05 --dry-run
+uv run --env-file .env --with-requirements requirements.txt python helpers/assign_mandatory_tags_to_time_entries.py --from 2026-06-01 --to 2026-06-05
 ```
 
 ## Contributing
