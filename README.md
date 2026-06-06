@@ -4,6 +4,7 @@ This repository contains scripts to automate projects and tasks synchronization 
 
 - Synchronizing clients, projects and tasks into TimeCamp
 - Exporting time entries from TimeCamp
+- Synchronizing meandatory tags and assigned users
 
 ## Installation
 
@@ -31,18 +32,14 @@ To set up automatic daily synchronization, you can use a task scheduler like cro
 ### Harvest ↔ TimeCamp Synchronization
 
 ```bash
-# Sync clients, projects
 python3 fetch_harvest.py
 python3 sync_projects.py
-
-# Export time entries for a date range
 python3 export_time_entries_harvest.py 2026-03-19 2026-03-19
 ```
 
 ### Toggl JSON → TimeCamp Synchronization
 
 ```bash
-# Convert Toggl projects export into tasks.json, then sync it
 python3 fetch_toggl_json.py projects.json
 python3 sync_projects.py
 ```
@@ -50,10 +47,7 @@ python3 sync_projects.py
 ### Redmine ↔ TimeCamp Synchronization
 
 ```bash
-# Sync projects and tasks
 python3 fetch_redmine_and_sync.py
-
-# Export time entries for a date range
 python3 export_time_entries_redmine.py 2026-03-19 2026-03-19
 ```
 
@@ -74,7 +68,6 @@ python3 sync_projects.py
 ### Zendesk → TimeCamp Synchronization
 
 ```bash
-# Convert Zendesk organizations and active tickets into tasks.json, then sync it
 python3 fetch_zendesk.py
 python3 sync_projects.py
 ```
@@ -82,16 +75,24 @@ python3 sync_projects.py
 ### Monday.com → TimeCamp Synchronization
 
 ```bash
-# Convert Monday boards, groups, items and subitems into tasks.json, then sync it
 python3 fetch_mondaycom.py
 python3 sync_projects.py
 ```
 
-Monday task external IDs are written as `monday_*` to match TimeCamp's native Monday.com integration.
-Set `MONDAY_MEANDATORY_TAGS=Client` to add item column values to JSON as
-`"meandatory_tags": {"Client": ["client name"]}`. Multiple column titles can be comma-separated.
-Monday people columns are exported on items/subitems as
-`"assigned_users": {"external_user_id": {"email": "...", "username": "..."}}` when available.
+### Limiting TimeCamp Sync Actions
+
+By default, `sync_projects.py` runs all actions: creating missing tasks, archiving stale
+tasks, creating/restoring mandatory tag lists and tags, assigning mandatory tags to tasks,
+and assigning users to tasks.
+
+Set `TIMECAMP_SYNC_ACTIONS` to a comma-separated list to run only selected actions:
+
+```bash
+# Only create/restore tags, assign mandatory tags, and assign users.
+TIMECAMP_SYNC_ACTIONS=tags,mandatory_tags,users uv run --env-file .env --with-requirements requirements.txt python sync_projects.py
+```
+
+Available actions are `tasks`, `archive`, `tags`, `mandatory_tags`, and `users`.
 
 ## Helpers
 

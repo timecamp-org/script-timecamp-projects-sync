@@ -264,9 +264,17 @@ def build_required_tags_by_timecamp_task_id(
         )
     }
     required_tags_by_task_id: Dict[int, List[RequiredTag]] = {}
+    source_tasks_by_task_id = {
+        str(task.get("task_id")): task for task in source_tasks if task.get("task_id")
+    }
+    effective_tags_cache: Dict[str, Dict[str, List[str]]] = {}
 
     for source_task in source_tasks:
-        mandatory_tags = get_task_mandatory_tags(source_task)
+        mandatory_tags = get_effective_task_mandatory_tags(
+            source_task=source_task,
+            source_tasks_by_task_id=source_tasks_by_task_id,
+            cache=effective_tags_cache,
+        )
         if not mandatory_tags:
             continue
 
@@ -317,6 +325,52 @@ def build_required_tags_by_timecamp_task_id(
         f"{len(required_tags_by_task_id)} TimeCamp task(s)."
     )
     return required_tags_by_task_id
+
+
+def get_effective_task_mandatory_tags(
+    source_task: Dict[str, Any],
+    source_tasks_by_task_id: Dict[str, Dict[str, Any]],
+    cache: Dict[str, Dict[str, List[str]]],
+    stack: Optional[set] = None,
+) -> Dict[str, List[str]]:
+    task_id = str(source_task.get("task_id") or "")
+    if not task_id:
+        return get_task_mandatory_tags(source_task)
+
+    if task_id in cache:
+        return cache[task_id]
+
+    if stack is None:
+        stack = set()
+    if task_id in stack:
+        print(f"Warning: cycle detected while resolving mandatory tags for {task_id}")
+        return {}
+
+    stack.add(task_id)
+    effective_tags: Dict[str, List[str]] = {}
+    parent_id = source_task.get("parent_id")
+    parent_task = (
+        source_tasks_by_task_id.get(str(parent_id))
+        if parent_id not in (None, "", 0, "0")
+        else None
+    )
+
+    if parent_task:
+        effective_tags.update(
+            get_effective_task_mandatory_tags(
+                source_task=parent_task,
+                source_tasks_by_task_id=source_tasks_by_task_id,
+                cache=cache,
+                stack=stack,
+            )
+        )
+
+    for tag_list_name, tag_names in get_task_mandatory_tags(source_task).items():
+        effective_tags[tag_list_name] = tag_names
+
+    stack.remove(task_id)
+    cache[task_id] = effective_tags
+    return effective_tags
 
 
 def get_source_external_task_id(task: Dict[str, Any]) -> str:

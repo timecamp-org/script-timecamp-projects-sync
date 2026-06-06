@@ -442,7 +442,10 @@ def get_done_statuses_for_board(board: Dict[str, Any]) -> Set[int]:
         MONDAY_FIELD_TYPE_STATUS,
         "settings_str",
     )
-    done_colors = settings.get("done_colors") or [MONDAY_DEFAULT_DONE_STATUS_INDEX]
+    done_colors = settings.get("done_colors")
+    if done_colors is None:
+        done_colors = [MONDAY_DEFAULT_DONE_STATUS_INDEX]
+
     return {int(status_index) for status_index in done_colors}
 
 

@@ -6,6 +6,17 @@ import requests
 TIMECAMP_API_BASE_URL = "https://app.timecamp.com/third_party/api"
 
 
+class TimeCampRateLimitError(Exception):
+    def __init__(self, method: str, url: str, retry_after: Optional[str] = None):
+        self.method = method
+        self.url = url
+        self.retry_after = retry_after
+        message = f"TimeCamp rate limit exceeded for {method} {url}"
+        if retry_after:
+            message += f" (retry after: {retry_after})"
+        super().__init__(message)
+
+
 class TimeCampClient:
     def __init__(self, api_token: str, base_url: str = TIMECAMP_API_BASE_URL):
         self.base_url = base_url.rstrip("/")
@@ -27,6 +38,13 @@ class TimeCampClient:
     ) -> Any:
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
         response = self.session.request(method, url, json=json, params=params)
+        if response.status_code == 429:
+            raise TimeCampRateLimitError(
+                method=method,
+                url=url,
+                retry_after=response.headers.get("Retry-After"),
+            )
+
         response.raise_for_status()
 
         if not response.content:
@@ -118,6 +136,8 @@ class TimeCampClient:
         data = self._request("GET", f"task/{task_id}/tags")
         if isinstance(data, dict):
             return data
+        if isinstance(data, list):
+            return _task_tags_list_to_dict(data)
 
         raise ValueError(f"Unexpected TimeCamp task tags response: {type(data)}")
 
@@ -204,6 +224,8 @@ class TimeCampClient:
         data = self._request("GET", f"entries/{entry_id}/tags")
         if isinstance(data, dict):
             return data
+        if isinstance(data, list):
+            return {str(entry_id): data}
 
         raise ValueError(f"Unexpected TimeCamp entry tags response: {type(data)}")
 
@@ -217,3 +239,30 @@ class TimeCampClient:
             f"entries/{entry_id}/tags",
             json={"tags": ",".join(str(tag_id) for tag_id in tag_ids)},
         )
+
+
+def _task_tags_list_to_dict(tags: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    assignments: Dict[str, Dict[str, Any]] = {}
+
+    for tag in tags:
+        if not isinstance(tag, dict):
+            continue
+
+        tag_list_id = tag.get("tagListId") or tag.get("tag_list_id") or tag.get("list_id")
+        if tag_list_id is None:
+            continue
+
+        tag_list_key = str(tag_list_id)
+        tag_list = assignments.setdefault(
+            tag_list_key,
+            {
+                "id": tag_list_id,
+                "name": tag.get("tagListName") or tag.get("tag_list_name"),
+                "inherit": tag.get("inherit", False),
+                "hasAssignedTags": True,
+                "tags": [],
+            },
+        )
+        tag_list["tags"].append(tag)
+
+    return assignments

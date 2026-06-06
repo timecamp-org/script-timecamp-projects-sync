@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .timecamp_client import TimeCampClient
 
@@ -130,11 +130,15 @@ def assign_mandatory_tags_to_task(
     timecamp_task_id: Any,
     source_task: Dict[str, Any],
     tag_sync_result: MandatoryTagSyncResult,
+    max_tags_to_add: Optional[int] = None,
 ) -> int:
     mandatory_tags = get_task_mandatory_tags(source_task)
     assigned_tags = 0
     current_assignments = client.get_task_tags(timecamp_task_id)
-    assigned_tag_ids = _assigned_tag_ids(current_assignments)
+    assigned_tags_by_id = _assigned_tags_by_id(current_assignments)
+    assigned_tag_ids = set(assigned_tags_by_id)
+    pending_assignments = []
+    tags_to_add_count = 0
 
     for tag_list_name, tag_names in mandatory_tags.items():
         tag_definitions = [
@@ -144,10 +148,6 @@ def assign_mandatory_tags_to_task(
         if not tag_definitions:
             continue
 
-        tag_list_id = tag_definitions[0].tag_list_id
-        if _has_direct_tag_list_assignment(current_assignments, tag_list_id):
-            client.remove_tag_list_from_task(timecamp_task_id, tag_list_id)
-
         tags_payload = [
             {
                 "tag_id": tag_definition.tag_id,
@@ -155,12 +155,30 @@ def assign_mandatory_tags_to_task(
             }
             for tag_definition in tag_definitions
         ]
+        tag_list_id = tag_definitions[0].tag_list_id
         tags_to_add = [
             tag for tag in tags_payload if int(tag["tag_id"]) not in assigned_tag_ids
         ]
         tags_to_update = [
-            tag for tag in tags_payload if int(tag["tag_id"]) in assigned_tag_ids
+            tag
+            for tag in tags_payload
+            if int(tag["tag_id"]) in assigned_tag_ids
+            and not _is_truthy_flag(assigned_tags_by_id[int(tag["tag_id"])].get("mandatory"))
         ]
+        tags_to_add_count += len(tags_to_add)
+        pending_assignments.append((tag_list_id, tags_to_add, tags_to_update))
+
+    if max_tags_to_add is not None and tags_to_add_count > max_tags_to_add:
+        print(
+            "Skipping mandatory tags for TimeCamp task "
+            f"{timecamp_task_id}: {tags_to_add_count} tags would be added "
+            f"(limit: {max_tags_to_add})"
+        )
+        return 0
+
+    for tag_list_id, tags_to_add, tags_to_update in pending_assignments:
+        if _has_direct_tag_list_assignment(current_assignments, tag_list_id):
+            client.remove_tag_list_from_task(timecamp_task_id, tag_list_id)
 
         if tags_to_add:
             client.add_tags_to_task(timecamp_task_id, tags_to_add)
@@ -249,19 +267,26 @@ def _is_archived(value: Dict[str, Any]) -> bool:
         return False
 
 
-def _assigned_tag_ids(assignments: Dict[str, Dict[str, Any]]) -> set:
-    tag_ids = set()
+def _assigned_tags_by_id(assignments: Dict[str, Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+    tags_by_id: Dict[int, Dict[str, Any]] = {}
 
     for tag_list in assignments.values():
         for tag in tag_list.get("tags", []):
             if tag.get("inherit"):
                 continue
 
-            tag_id = tag.get("id") or tag.get("tag_id")
+            tag_id = tag.get("id") or tag.get("tag_id") or tag.get("tagId")
             if tag_id is not None:
-                tag_ids.add(int(tag_id))
+                tags_by_id[int(tag_id)] = tag
 
-    return tag_ids
+    return tags_by_id
+
+
+def _is_truthy_flag(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+    return bool(value)
 
 
 def _has_direct_tag_list_assignment(
