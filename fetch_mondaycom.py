@@ -96,6 +96,104 @@ class MondayClient:
         data = self._request(query)
         return data.get("users", [])
 
+    def get_board_columns(self, board_ids: Iterable[str]) -> List[Dict[str, Any]]:
+        """Get Monday board column metadata without fetching board items."""
+        query = """
+        query ($boardIds: [ID!]) {
+          boards(ids: $boardIds) {
+            id
+            name
+            type
+            columns {
+              id
+              title
+              type
+              settings_str
+            }
+          }
+        }
+        """
+        normalized_board_ids = [str(board_id) for board_id in board_ids]
+        if not normalized_board_ids:
+            return []
+
+        data = self._request(query, {"boardIds": normalized_board_ids})
+        return data.get("boards", [])
+
+    def get_items_by_ids(self, item_ids: Iterable[str]) -> List[Dict[str, Any]]:
+        """Get Monday items by id with board and column value metadata."""
+        query = """
+        query ($itemIds: [ID!], $limit: Int!) {
+          items(ids: $itemIds, limit: $limit) {
+            id
+            name
+            state
+            board {
+              id
+              name
+              type
+            }
+            parent_item {
+              id
+            }
+            column_values {
+              id
+              text
+              value
+              type
+            }
+          }
+        }
+        """
+        normalized_item_ids = [str(item_id) for item_id in item_ids]
+        if not normalized_item_ids:
+            return []
+
+        items: List[Dict[str, Any]] = []
+        batch_size = 100
+        for index in range(0, len(normalized_item_ids), batch_size):
+            batch = normalized_item_ids[index:index + batch_size]
+            data = self._request(query, {"itemIds": batch, "limit": len(batch)})
+            items.extend(data.get("items", []))
+
+        return items
+
+    def change_simple_column_value(
+        self,
+        board_id: str,
+        item_id: str,
+        column_id: str,
+        value: str,
+    ) -> Dict[str, Any]:
+        """Set a Monday simple column value, e.g. a numbers column."""
+        mutation = """
+        mutation (
+          $boardId: ID!,
+          $itemId: ID!,
+          $columnId: String!,
+          $value: String!
+        ) {
+          change_simple_column_value(
+            board_id: $boardId,
+            item_id: $itemId,
+            column_id: $columnId,
+            value: $value
+          ) {
+            id
+          }
+        }
+        """
+        data = self._request(
+            mutation,
+            {
+                "boardId": str(board_id),
+                "itemId": str(item_id),
+                "columnId": str(column_id),
+                "value": str(value),
+            },
+        )
+        return data.get("change_simple_column_value") or {}
+
     def get_boards(self, board_ids: Iterable[str]) -> List[Dict[str, Any]]:
         """Get boards with groups, columns, and all items."""
         all_boards: List[Dict[str, Any]] = []
