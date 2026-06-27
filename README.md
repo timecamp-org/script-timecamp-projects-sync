@@ -77,6 +77,18 @@ python3 sync_projects.py
 ```bash
 python3 fetch_mondaycom.py
 python3 sync_projects.py
+
+uv run --with-requirements requirements.txt python fetch_mondaycom.py
+uv run --with-requirements requirements.txt python sync_projects.py
+
+# Export TimeCamp totals back to Monday.com Time Tracked numbers columns.
+# Dry-run by default. Main rows are not updated because Monday should tally subitems.
+uv run --with-requirements requirements.txt python fetch_mondaycom.py
+uv run --with-requirements requirements.txt python export_monday_time_logged.py --from 2026-06-01 --to 2026-06-18 --column-title "Time Tracked"
+uv run --with-requirements requirements.txt python export_monday_time_logged.py --from 2026-06-01 --to 2026-06-18 --column-title "Time Tracked" --apply
+
+# Only use this if main rows should be overwritten by the exporter too.
+uv run --with-requirements requirements.txt python export_monday_time_logged.py --from 2026-06-01 --to 2026-06-18 --column-title "Time Tracked" --include-main-rows
 ```
 
 ### Limiting TimeCamp Sync Actions
