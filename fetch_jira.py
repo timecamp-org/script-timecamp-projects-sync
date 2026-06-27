@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 from jira import JIRA
+import requests
 import hashlib
 
 # Load environment variables
@@ -21,9 +22,14 @@ class JiraClient:
             email: Email address for authentication
             api_token: API token for authentication
         """
-        self.server = server
+        self.server = server.rstrip('/')
+        self.session = requests.Session()
+        self.session.auth = (email, api_token)
+        self.session.headers.update({
+            'Accept': 'application/json'
+        })
         self.jira = JIRA(
-            server=server,
+            server=self.server,
             basic_auth=(email, api_token)
         )
         
@@ -46,40 +52,54 @@ class JiraClient:
         Returns:
             List of issues with their details
         """
-        try:
-            # Fetch only active issues for the project
-            # Exclude common completed statuses
-            # Using pagination to handle large projects
-            all_issues = []
-            start_at = 0
-            max_results = 100
-            
-            # JQL to exclude completed statuses
-            jql = f'project = {project_key} AND status NOT IN (Done, Closed, Resolved, Completed)'
-            
-            while True:
-                issues = self.jira.search_issues(
-                    jql,
-                    startAt=start_at,
-                    maxResults=max_results,
-                    expand='names'
-                )
-                
-                if not issues:
-                    break
-                
-                all_issues.extend([self._serialize_issue(issue) for issue in issues])
-                
-                if len(issues) < max_results:
-                    break
-                    
-                start_at += max_results
-            
-            return all_issues
-            
-        except Exception as e:
-            print(f"Error fetching issues for project {project_key}: {str(e)}")
-            return []
+        all_issues = []
+        max_results = 100
+        next_page_token = None
+        fields = [
+            'issuetype',
+            'summary',
+            'status',
+            'priority',
+            'assignee',
+            'reporter',
+            'created',
+            'updated',
+            'project',
+            'parent',
+            'subtasks',
+            'customfield_10014',
+        ]
+
+        # Jira Cloud removed the old /rest/api/2/search endpoint used by jira.search_issues().
+        # The replacement endpoint uses cursor pagination with nextPageToken.
+        jql = f'project = {project_key} AND status NOT IN (Done, Closed, Resolved, Completed)'
+
+        while True:
+            params = {
+                'jql': jql,
+                'maxResults': max_results,
+                'fields': ','.join(fields),
+                'expand': 'names',
+            }
+            if next_page_token:
+                params['nextPageToken'] = next_page_token
+
+            response = self.session.get(
+                f'{self.server}/rest/api/3/search/jql',
+                params=params,
+                timeout=60,
+            )
+            response.raise_for_status()
+            data = response.json()
+            issues = data.get('issues', [])
+
+            all_issues.extend([self._serialize_issue_json(issue) for issue in issues])
+
+            next_page_token = data.get('nextPageToken')
+            if data.get('isLast', True) or not next_page_token:
+                break
+
+        return all_issues
     
     def _serialize_project(self, project) -> Dict[str, Any]:
         """Convert Jira Project object to dictionary"""
@@ -126,6 +146,49 @@ class JiraClient:
             serialized['epic_link'] = str(fields.customfield_10014)
         
         return serialized
+
+    def _serialize_issue_json(self, issue: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert Jira REST issue JSON to dictionary."""
+        fields = issue.get('fields') or {}
+        parent = fields.get('parent') or {}
+        subtasks = fields.get('subtasks') or []
+        epic_link = fields.get('customfield_10014')
+
+        serialized = {
+            'id': issue.get('id'),
+            'key': issue.get('key'),
+            'issue_type': self._name(fields.get('issuetype')),
+            'summary': fields.get('summary') or '',
+            'status': self._name(fields.get('status')),
+            'priority': self._name(fields.get('priority')),
+            'assignee': self._display_name(fields.get('assignee')),
+            'reporter': self._display_name(fields.get('reporter')),
+            'created': fields.get('created'),
+            'updated': fields.get('updated'),
+            'project_key': (fields.get('project') or {}).get('key', ''),
+            'parent': parent.get('key') if parent else None,
+            'subtasks': [subtask.get('key') for subtask in subtasks if subtask.get('key')],
+        }
+
+        if epic_link:
+            if isinstance(epic_link, dict):
+                serialized['epic_link'] = epic_link.get('key') or epic_link.get('id') or str(epic_link)
+            else:
+                serialized['epic_link'] = str(epic_link)
+
+        return serialized
+
+    @staticmethod
+    def _name(value: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not value:
+            return None
+        return value.get('name')
+
+    @staticmethod
+    def _display_name(value: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not value:
+            return None
+        return value.get('displayName')
 
 class JiraFetcher:
     """Main class for fetching data from multiple Jira instances"""
@@ -254,6 +317,7 @@ class JiraFetcher:
                 print(f"Error fetching data from instance {instance_config['name']}: {str(e)}")
                 import traceback
                 traceback.print_exc()
+                raise
         
         return flattened_data
     
@@ -303,9 +367,17 @@ def main():
     print(f"Data saved to: {filename}")
     
     # Print summary
+    def is_project_item(item: Dict[str, Any]) -> bool:
+        return (
+            item['parent_id'] != 0
+            and isinstance(item['parent_id'], str)
+            and isinstance(item['task_id'], str)
+            and item['task_id'].startswith(f"{item['parent_id']}_proj_")
+        )
+
     total_items = len(data)
     organizations = len([item for item in data if item['parent_id'] == 0])
-    projects = len([item for item in data if isinstance(item['parent_id'], str) and item['parent_id'].startswith('org_') and '_proj_' in item['task_id'] and item['task_id'].count('_') == 2])
+    projects = len([item for item in data if is_project_item(item)])
     issues = total_items - organizations - projects
     
     print(f"\nSummary:")
@@ -322,7 +394,7 @@ def main():
             if item['parent_id'] == 0:
                 indent = ""
                 level = "[ORG]"
-            elif isinstance(item['task_id'], str) and '_proj_' in item['task_id'] and item['task_id'].count('_') == 2:
+            elif is_project_item(item):
                 indent = "  "
                 level = "[PROJECT]"
             else:
@@ -336,4 +408,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
