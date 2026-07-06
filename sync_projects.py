@@ -1,3 +1,4 @@
+import argparse
 import os
 import json
 from datetime import datetime
@@ -28,6 +29,7 @@ TIMECAMP_TASK_ID = os.getenv('TIMECAMP_TASK_ID')
 TIMECAMP_SYNC_ACTIONS = os.getenv('TIMECAMP_SYNC_ACTIONS')
 TIMECAMP_MAX_MANDATORY_TAGS_TO_ADD = os.getenv('TIMECAMP_MAX_MANDATORY_TAGS_TO_ADD')
 
+DEFAULT_TASKS_FILE = "tasks.json"
 DEFAULT_SYNC_ACTIONS = {
     "tasks",
     "archive",
@@ -159,7 +161,7 @@ def get_source_external_task_id(task):
 
     return f"sync_{task_id}"
 
-def load_tasks_from_json(filename='tasks.json'):
+def load_tasks_from_json(filename=DEFAULT_TASKS_FILE):
     """Load hierarchical tasks from JSON file"""
     try:
         with open(filename, 'r', encoding='utf-8') as f:
@@ -171,7 +173,7 @@ def load_tasks_from_json(filename='tasks.json'):
         print(f"Error parsing {filename}: {e}")
         return []
 
-def sync_hierarchical_tasks_to_timecamp(enabled_actions=None):
+def sync_hierarchical_tasks_to_timecamp(enabled_actions=None, input_file=DEFAULT_TASKS_FILE):
     """Main sync function to sync hierarchical task data from tasks.json to TimeCamp"""
     if enabled_actions is None:
         enabled_actions = get_enabled_sync_actions()
@@ -179,7 +181,7 @@ def sync_hierarchical_tasks_to_timecamp(enabled_actions=None):
     max_mandatory_tags_to_add = get_optional_env_int(TIMECAMP_MAX_MANDATORY_TAGS_TO_ADD)
 
     # Load hierarchical task data from JSON file
-    azure_tasks = load_tasks_from_json()
+    azure_tasks = load_tasks_from_json(input_file)
     if not azure_tasks:
         return
 
@@ -352,9 +354,9 @@ def sync_hierarchical_tasks_to_timecamp(enabled_actions=None):
         print(f"- User assignment errors: {user_assignment_errors}")
     print(f"- Total processed: {len(azure_tasks_sorted)} tasks")
 
-def show_sync_preview():
+def show_sync_preview(input_file=DEFAULT_TASKS_FILE):
     """Show a preview of what would be synced without making changes"""
-    tasks = load_tasks_from_json()
+    tasks = load_tasks_from_json(input_file)
     if not tasks:
         return
     
@@ -417,21 +419,40 @@ def show_sync_preview():
     for task in top_level_tasks:
         print_task_hierarchy(task['task_id'], tasks)
 
-if __name__ == "__main__":
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Sync hierarchical tasks from a JSON file to TimeCamp."
+    )
+    parser.add_argument(
+        "--input",
+        default=DEFAULT_TASKS_FILE,
+        help=f"Input tasks JSON file path (default: {DEFAULT_TASKS_FILE})",
+    )
+
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+
     print(f"Starting hierarchical task sync to TimeCamp at {datetime.now()}")
     enabled_actions = get_enabled_sync_actions()
     print_sync_action_plan(enabled_actions)
     
     # Show preview of what would be synced
-    show_sync_preview()
+    show_sync_preview(args.input)
     
     # Run the actual sync (only if credentials are available)
     if TIMECAMP_API_TOKEN:
         try:
-            sync_hierarchical_tasks_to_timecamp(enabled_actions)
+            sync_hierarchical_tasks_to_timecamp(enabled_actions, args.input)
         except TimeCampRateLimitError as e:
             stop_on_rate_limit(e)
     else:
         print("\nTo run actual sync, set TIMECAMP_API_TOKEN in .env file")
     
     print(f"Sync finished at {datetime.now()}")
+
+
+if __name__ == "__main__":
+    main()

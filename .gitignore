@@ -19,5 +19,7 @@ env/
 .temp*
 
 tasks.json
-tasks*.json
+task*.json
 projects.json
+
+data/*

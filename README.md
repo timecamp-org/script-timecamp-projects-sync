@@ -72,6 +72,13 @@ python3 fetch_zendesk.py
 python3 sync_projects.py
 ```
 
+### TimeCamp → TimeCamp Synchronization
+
+```bash
+uv run --python 3.13 --with-requirements requirements.txt python fetch_timecamp.py --output task_tc.json
+uv run --env-file .env --python 3.13 --with-requirements requirements.txt python sync_projects.py --input task_tc.json
+```
+
 ### Monday.com → TimeCamp Synchronization
 
 ```bash

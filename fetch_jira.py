@@ -72,7 +72,14 @@ class JiraClient:
 
         # Jira Cloud removed the old /rest/api/2/search endpoint used by jira.search_issues().
         # The replacement endpoint uses cursor pagination with nextPageToken.
-        jql = f'project = {project_key} AND status NOT IN (Done, Closed, Resolved, Completed)'
+        excluded_statuses = ["Done", "Closed", "Resolved", "Completed"]
+        excluded_statuses_jql = ", ".join(
+            self._quote_jql_value(status) for status in excluded_statuses
+        )
+        jql = (
+            f"project = {self._quote_jql_value(project_key)} "
+            f"AND status NOT IN ({excluded_statuses_jql})"
+        )
 
         while True:
             params = {
@@ -189,6 +196,11 @@ class JiraClient:
         if not value:
             return None
         return value.get('displayName')
+
+    @staticmethod
+    def _quote_jql_value(value: str) -> str:
+        escaped = value.replace('\\', '\\\\').replace('"', '\\"')
+        return f'"{escaped}"'
 
 class JiraFetcher:
     """Main class for fetching data from multiple Jira instances"""
