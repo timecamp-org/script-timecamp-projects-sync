@@ -14,6 +14,12 @@ class TagDefinition:
 
 
 @dataclass
+class MandatoryTagTaskSyncResult:
+    assigned: int = 0
+    skipped_due_to_limit: bool = False
+
+
+@dataclass
 class MandatoryTagSyncResult:
     tags: Dict[Tuple[str, str], TagDefinition]
     created_tag_lists: int = 0
@@ -132,9 +138,27 @@ def assign_mandatory_tags_to_task(
     tag_sync_result: MandatoryTagSyncResult,
     max_tags_to_add: Optional[int] = None,
 ) -> int:
+    return sync_mandatory_tags_to_task(
+        client=client,
+        timecamp_task_id=timecamp_task_id,
+        source_task=source_task,
+        tag_sync_result=tag_sync_result,
+        max_tags_to_add=max_tags_to_add,
+    ).assigned
+
+
+def sync_mandatory_tags_to_task(
+    client: TimeCampClient,
+    timecamp_task_id: Any,
+    source_task: Dict[str, Any],
+    tag_sync_result: MandatoryTagSyncResult,
+    max_tags_to_add: Optional[int] = None,
+    current_assignments: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> MandatoryTagTaskSyncResult:
     mandatory_tags = get_task_mandatory_tags(source_task)
     assigned_tags = 0
-    current_assignments = client.get_task_tags(timecamp_task_id)
+    if current_assignments is None:
+        current_assignments = client.get_task_tags(timecamp_task_id)
     assigned_tags_by_id = _assigned_tags_by_id(current_assignments)
     assigned_tag_ids = set(assigned_tags_by_id)
     pending_assignments = []
@@ -174,7 +198,7 @@ def assign_mandatory_tags_to_task(
             f"{timecamp_task_id}: {tags_to_add_count} tags would be added "
             f"(limit: {max_tags_to_add})"
         )
-        return 0
+        return MandatoryTagTaskSyncResult(skipped_due_to_limit=True)
 
     for tag_list_id, tags_to_add, tags_to_update in pending_assignments:
         if _has_direct_tag_list_assignment(current_assignments, tag_list_id):
@@ -188,7 +212,34 @@ def assign_mandatory_tags_to_task(
             client.update_task_tags(timecamp_task_id, tags_to_update)
             assigned_tags += len(tags_to_update)
 
-    return assigned_tags
+    return MandatoryTagTaskSyncResult(assigned=assigned_tags)
+
+
+def get_desired_mandatory_tag_assignments(
+    source_task: Dict[str, Any],
+    tag_sync_result: MandatoryTagSyncResult,
+) -> List[Dict[str, Any]]:
+    assignment_keys = set()
+
+    for tag_list_name, tag_names in get_task_mandatory_tags(source_task).items():
+        for tag_name in tag_names:
+            tag_definition = tag_sync_result.get(tag_list_name, tag_name)
+            assignment_keys.add(
+                (
+                    int(tag_definition.tag_list_id),
+                    int(tag_definition.tag_id),
+                    True,
+                )
+            )
+
+    return [
+        {
+            "tag_list_id": tag_list_id,
+            "tag_id": tag_id,
+            "mandatory": mandatory,
+        }
+        for tag_list_id, tag_id, mandatory in sorted(assignment_keys)
+    ]
 
 
 def _load_tag_lists_by_name(client: TimeCampClient) -> Dict[str, Dict[str, Any]]:

@@ -113,6 +113,26 @@ TIMECAMP_SYNC_ACTIONS=tags,mandatory_tags,users uv run --env-file .env --with-re
 
 Available actions are `tasks`, `archive`, `tags`, `mandatory_tags`, and `users`.
 
+Mandatory tag assignment checks use a local cache at
+`data/timecamp_mandatory_tag_cache.json` by default. The first run still checks
+TimeCamp task tags to seed the cache, using TimeCamp's internal project-list tag
+payload in bulk when available instead of reading tags one task at a time. Later
+runs skip unchanged tasks when the TimeCamp task id, task `modify_time`, and
+desired mandatory tag ids still match. Set `TIMECAMP_MANDATORY_TAG_CACHE_FILE`
+to use a different cache path.
+
+Enable strict user sync when TimeCamp task assignees should exactly match the
+source JSON. This removes direct TimeCamp user assignments from synced tasks
+when those users are missing from `assigned_users` in the JSON file:
+
+```bash
+TIMECAMP_STRICT_USER_SYNC=true TIMECAMP_SYNC_ACTIONS=users uv run --env-file .env --with-requirements requirements.txt python sync_projects.py
+uv run --env-file .env --with-requirements requirements.txt python sync_projects.py --strict-user-sync
+```
+
+Strict mode only removes direct assignments on the task being synced. Inherited
+assignments from parent tasks are left alone.
+
 ## Helpers
 
 ```bash

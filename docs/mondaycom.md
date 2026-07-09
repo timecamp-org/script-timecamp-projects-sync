@@ -31,6 +31,15 @@ TIMECAMP_SYNC_ACTIONS=tags,mandatory_tags,users
 # Skip assigning task mandatory tags when more than N new tags would be added.
 # Leave unset for no limit.
 TIMECAMP_MAX_MANDATORY_TAGS_TO_ADD=1
+
+# Cache verified task mandatory-tag assignments. Cold runs use the internal
+# project-list tag payload in bulk when available, then write this cache.
+# Delete this file to force a full mandatory-tag recheck.
+TIMECAMP_MANDATORY_TAG_CACHE_FILE=data/timecamp_mandatory_tag_cache.json
+
+# Remove direct TimeCamp task user assignments that are missing from assigned_users
+# in the source JSON. Equivalent CLI flag: sync_projects.py --strict-user-sync.
+TIMECAMP_STRICT_USER_SYNC=true
 ```
 
 Available `TIMECAMP_SYNC_ACTIONS`: `tasks`, `archive`, `tags`, `mandatory_tags`, `users`.

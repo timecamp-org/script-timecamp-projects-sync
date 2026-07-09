@@ -1,9 +1,12 @@
+import re
+from time import perf_counter
 from typing import Any, Dict, List, Optional
 
 import requests
 
 
 TIMECAMP_API_BASE_URL = "https://app.timecamp.com/third_party/api"
+TIMECAMP_INTERNAL_API_BASE_URL = "https://app.timecamp.com/internal/api"
 
 
 class TimeCampRateLimitError(Exception):
@@ -18,8 +21,16 @@ class TimeCampRateLimitError(Exception):
 
 
 class TimeCampClient:
-    def __init__(self, api_token: str, base_url: str = TIMECAMP_API_BASE_URL):
+    def __init__(
+        self,
+        api_token: str,
+        base_url: str = TIMECAMP_API_BASE_URL,
+        internal_base_url: str = TIMECAMP_INTERNAL_API_BASE_URL,
+    ):
         self.base_url = base_url.rstrip("/")
+        self.internal_base_url = internal_base_url.rstrip("/")
+        self._api_request_counts: Dict[str, int] = {}
+        self._api_request_seconds: Dict[str, float] = {}
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -37,20 +48,69 @@ class TimeCampClient:
         params: Optional[Dict[str, Any]] = None,
     ) -> Any:
         url = f"{self.base_url}/{endpoint.lstrip('/')}"
-        response = self.session.request(method, url, json=json, params=params)
-        if response.status_code == 429:
-            raise TimeCampRateLimitError(
-                method=method,
-                url=url,
-                retry_after=response.headers.get("Retry-After"),
-            )
+        metric_key = _api_metric_key(method, endpoint)
+        started_at = perf_counter()
+        try:
+            response = self.session.request(method, url, json=json, params=params)
+            if response.status_code == 429:
+                raise TimeCampRateLimitError(
+                    method=method,
+                    url=url,
+                    retry_after=response.headers.get("Retry-After"),
+                )
 
-        response.raise_for_status()
+            response.raise_for_status()
 
-        if not response.content:
-            return {}
+            if not response.content:
+                return {}
 
-        return response.json()
+            return response.json()
+        finally:
+            elapsed_seconds = perf_counter() - started_at
+            self._record_api_metric(metric_key, elapsed_seconds)
+
+    def _request_internal(
+        self,
+        method: str,
+        endpoint: str,
+        json: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        url = f"{self.internal_base_url}/{endpoint.lstrip('/')}"
+        metric_key = _api_metric_key(method, f"internal/{endpoint.lstrip('/')}")
+        started_at = perf_counter()
+        try:
+            response = self.session.request(method, url, json=json, params=params)
+            if response.status_code == 429:
+                raise TimeCampRateLimitError(
+                    method=method,
+                    url=url,
+                    retry_after=response.headers.get("Retry-After"),
+                )
+
+            response.raise_for_status()
+
+            if not response.content:
+                return {}
+
+            return response.json()
+        finally:
+            elapsed_seconds = perf_counter() - started_at
+            self._record_api_metric(metric_key, elapsed_seconds)
+
+    def _record_api_metric(self, metric_key: str, elapsed_seconds: float) -> None:
+        self._api_request_counts[metric_key] = (
+            self._api_request_counts.get(metric_key, 0) + 1
+        )
+        self._api_request_seconds[metric_key] = (
+            self._api_request_seconds.get(metric_key, 0.0) + elapsed_seconds
+        )
+
+    def get_api_metrics_snapshot(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            "counts": dict(self._api_request_counts),
+            "seconds": dict(self._api_request_seconds),
+        }
 
     def get_tasks(self) -> List[Dict[str, Any]]:
         data = self._request("GET", "tasks")
@@ -61,6 +121,27 @@ class TimeCampClient:
             return data
 
         raise ValueError(f"Unexpected TimeCamp tasks response: {type(data)}")
+
+    def get_internal_projects(
+        self,
+        parent_id: Any,
+        status: str = "active",
+        include: Optional[List[str]] = None,
+        page: int = 1,
+    ) -> Dict[str, Any]:
+        body: Dict[str, Any] = {
+            "parentId": int(parent_id),
+            "status": status,
+            "page": int(page),
+        }
+        if include:
+            body["include"] = include
+
+        data = self._request_internal("POST", "v3/projects", json=body)
+        if isinstance(data, dict):
+            return data
+
+        raise ValueError(f"Unexpected TimeCamp internal projects response: {type(data)}")
 
     def create_task(
         self,
@@ -198,6 +279,29 @@ class TimeCampClient:
             },
         )
 
+    def get_project_assigned_users(self, task_id: Any) -> List[Dict[str, Any]]:
+        data = self._request("GET", f"v3/projects/{task_id}/assigned-users")
+
+        if isinstance(data, dict) and isinstance(data.get("data"), list):
+            return data["data"]
+        if isinstance(data, list):
+            return data
+
+        raise ValueError(
+            f"Unexpected TimeCamp assigned users response: {type(data)}"
+        )
+
+    def unassign_users_from_task(
+        self,
+        task_id: Any,
+        user_ids: List[int],
+    ) -> Any:
+        return self._request(
+            "PUT",
+            f"v3/projects/{task_id}/unassign",
+            json={"userIds": [int(user_id) for user_id in user_ids]},
+        )
+
     def get_time_entries(
         self,
         start_date: Any,
@@ -240,6 +344,13 @@ class TimeCampClient:
             json={"tags": ",".join(str(tag_id) for tag_id in tag_ids)},
         )
 
+    def update_time_entry_task(self, entry_id: Any, task_id: Any) -> Any:
+        return self._request(
+            "PUT",
+            f"v3/time-entries/{entry_id}",
+            json={"taskId": int(task_id)},
+        )
+
 
 def _task_tags_list_to_dict(tags: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     assignments: Dict[str, Dict[str, Any]] = {}
@@ -266,3 +377,9 @@ def _task_tags_list_to_dict(tags: List[Dict[str, Any]]) -> Dict[str, Dict[str, A
         tag_list["tags"].append(tag)
 
     return assignments
+
+
+def _api_metric_key(method: str, endpoint: str) -> str:
+    normalized_endpoint = endpoint.lstrip("/").split("?", 1)[0]
+    normalized_endpoint = re.sub(r"/\d+(?=/|$)", "/{id}", normalized_endpoint)
+    return f"{method.upper()} {normalized_endpoint}"
