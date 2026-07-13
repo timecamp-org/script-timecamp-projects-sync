@@ -28,10 +28,36 @@ class JiraClient:
         self.session.headers.update({
             'Accept': 'application/json'
         })
+        self._validate_authentication()
         self.jira = JIRA(
             server=self.server,
             basic_auth=(email, api_token)
         )
+
+    def _validate_authentication(self) -> None:
+        """Fail before fetching data when Jira rejects the configured credentials."""
+        try:
+            response = self.session.get(
+                f'{self.server}/rest/api/3/myself',
+                timeout=30,
+            )
+        except requests.RequestException as e:
+            raise RuntimeError(
+                f"Could not validate Jira authentication for {self.server}: {e}"
+            ) from e
+
+        if response.status_code in (401, 403):
+            raise RuntimeError(
+                f"Jira authentication failed for {self.server} "
+                f"(HTTP {response.status_code}). Check the configured email and API token."
+            )
+
+        try:
+            response.raise_for_status()
+        except requests.RequestException as e:
+            raise RuntimeError(
+                f"Could not validate Jira authentication for {self.server}: {e}"
+            ) from e
         
     def get_projects(self) -> List[Dict[str, Any]]:
         """Get all projects from the Jira instance"""
@@ -39,8 +65,9 @@ class JiraClient:
             projects = self.jira.projects()
             return [self._serialize_project(project) for project in projects]
         except Exception as e:
-            print(f"Error fetching projects: {str(e)}")
-            return []
+            raise RuntimeError(
+                f"Failed to fetch Jira projects from {self.server}: {e}"
+            ) from e
     
     def get_issues_for_project(self, project_key: str) -> List[Dict[str, Any]]:
         """
