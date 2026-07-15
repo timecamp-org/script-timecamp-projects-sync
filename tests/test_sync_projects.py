@@ -177,6 +177,142 @@ class SyncProjectsCliTest(unittest.TestCase):
             lines,
         )
 
+    def test_estimate_sync_updates_only_changed_bulk_loaded_budgets(self):
+        class FakeClient:
+            def __init__(self):
+                self.counts = {}
+                self.seconds = {}
+                self.estimate_updates = []
+
+            def _record_api_call(self, key):
+                self.counts[key] = self.counts.get(key, 0) + 1
+                self.seconds[key] = self.seconds.get(key, 0.0) + 1.0
+
+            def get_api_metrics_snapshot(self):
+                return {
+                    "counts": dict(self.counts),
+                    "seconds": dict(self.seconds),
+                }
+
+            def get_tasks(self):
+                self._record_api_call("GET tasks")
+                return [
+                    {
+                        "task_id": 101,
+                        "external_task_id": "source_current",
+                        "budgeted": 7200,
+                        "budget_unit": "hours",
+                    },
+                    {
+                        "task_id": 102,
+                        "external_task_id": "source_changed",
+                        "budgeted": 0,
+                        "budget_unit": "hours",
+                    },
+                    {
+                        "task_id": 103,
+                        "external_task_id": "source_without_estimate",
+                        "budgeted": 3600,
+                        "budget_unit": "hours",
+                    },
+                ]
+
+            def update_task_estimate(self, task_id, estimate_seconds):
+                self._record_api_call("PATCH v3/task/{id}/billing-settings")
+                self.estimate_updates.append((task_id, estimate_seconds))
+                return {}
+
+        source_tasks = [
+            {
+                "task_id": "source_current",
+                "external_task_id": "source_current",
+                "parent_id": 0,
+                "name": "Already current",
+                "original_estimate_seconds": 7200,
+            },
+            {
+                "task_id": "source_changed",
+                "external_task_id": "source_changed",
+                "parent_id": 0,
+                "name": "Needs update",
+                "original_estimate_seconds": 2700,
+            },
+            {
+                "task_id": "source_without_estimate",
+                "external_task_id": "source_without_estimate",
+                "parent_id": 0,
+                "name": "Leave manual estimate alone",
+                "original_estimate_seconds": None,
+            },
+        ]
+        client = FakeClient()
+
+        with (
+            patch.object(sync_projects, "TIMECAMP_API_TOKEN", "token"),
+            patch.object(sync_projects, "load_tasks_from_json", return_value=source_tasks),
+            patch.object(sync_projects, "TimeCampClient", return_value=client),
+        ):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                sync_projects.sync_hierarchical_tasks_to_timecamp(
+                    {"estimates"},
+                    "tasks.json",
+                    False,
+                )
+
+        self.assertEqual(client.estimate_updates, [(102, 2700)])
+        self.assertIn("- Estimates updated: 1", output.getvalue())
+        self.assertIn("- Estimates already current: 1", output.getvalue())
+        self.assertIn(
+            "API calls during task loop: total=1; "
+            "PATCH v3/task/{id}/billing-settings=1 (1.00s)",
+            output.getvalue(),
+        )
+
+    def test_new_task_gets_source_estimate_after_creation(self):
+        class FakeClient:
+            def __init__(self):
+                self.estimate_updates = []
+
+            def get_tasks(self):
+                return []
+
+            def get_api_metrics_snapshot(self):
+                return {"counts": {}, "seconds": {}}
+
+            def create_task(self, name, parent_id, external_task_id):
+                return {
+                    "task_id": 201,
+                    "external_task_id": external_task_id,
+                    "name": name,
+                }
+
+            def update_task_estimate(self, task_id, estimate_seconds):
+                self.estimate_updates.append((task_id, estimate_seconds))
+                return {}
+
+        source_task = {
+            "task_id": "source_new",
+            "external_task_id": "source_new",
+            "parent_id": 0,
+            "name": "New estimated task",
+            "original_estimate_seconds": 5400,
+        }
+        client = FakeClient()
+
+        with (
+            patch.object(sync_projects, "TIMECAMP_API_TOKEN", "token"),
+            patch.object(sync_projects, "load_tasks_from_json", return_value=[source_task]),
+            patch.object(sync_projects, "TimeCampClient", return_value=client),
+        ):
+            sync_projects.sync_hierarchical_tasks_to_timecamp(
+                {"tasks", "estimates"},
+                "tasks.json",
+                False,
+            )
+
+        self.assertEqual(client.estimate_updates, [(201, 5400)])
+
     def test_strict_user_sync_skips_tasks_with_no_source_or_current_users(self):
         class FakeClient:
             def get_tasks(self):

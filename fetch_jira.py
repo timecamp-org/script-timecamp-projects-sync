@@ -95,6 +95,7 @@ class JiraClient:
             'parent',
             'subtasks',
             'customfield_10014',
+            'timetracking',
         ]
 
         # Jira Cloud removed the old /rest/api/2/search endpoint used by jira.search_issues().
@@ -149,6 +150,7 @@ class JiraClient:
     def _serialize_issue(self, issue) -> Dict[str, Any]:
         """Convert Jira Issue object to dictionary"""
         fields = issue.fields
+        timetracking = getattr(fields, 'timetracking', None)
         
         serialized = {
             'id': issue.id,
@@ -163,7 +165,15 @@ class JiraClient:
             'updated': str(fields.updated) if hasattr(fields, 'updated') else None,
             'project_key': fields.project.key if hasattr(fields, 'project') else '',
             'parent': None,
-            'subtasks': []
+            'subtasks': [],
+            'original_estimate': (
+                getattr(timetracking, 'originalEstimate', None)
+                if timetracking else None
+            ),
+            'original_estimate_seconds': (
+                getattr(timetracking, 'originalEstimateSeconds', None)
+                if timetracking else None
+            ),
         }
         
         # Get parent issue if exists
@@ -187,6 +197,7 @@ class JiraClient:
         parent = fields.get('parent') or {}
         subtasks = fields.get('subtasks') or []
         epic_link = fields.get('customfield_10014')
+        timetracking = fields.get('timetracking') or {}
 
         serialized = {
             'id': issue.get('id'),
@@ -202,6 +213,8 @@ class JiraClient:
             'project_key': (fields.get('project') or {}).get('key', ''),
             'parent': parent.get('key') if parent else None,
             'subtasks': [subtask.get('key') for subtask in subtasks if subtask.get('key')],
+            'original_estimate': timetracking.get('originalEstimate'),
+            'original_estimate_seconds': timetracking.get('originalEstimateSeconds'),
         }
 
         if epic_link:
@@ -235,6 +248,10 @@ class JiraFetcher:
     def __init__(self):
         """Initialize with configuration from environment variables"""
         self.instances = self._load_instances_config()
+        self.prefix_issue_key_to_task_name = (
+            os.getenv('JIRA_PREFIX_ISSUE_KEY_TO_TASK_NAME', '').strip().lower()
+            in {'1', 'true', 'yes', 'y', 'on'}
+        )
         
     def _load_instances_config(self) -> List[Dict[str, str]]:
         """
@@ -266,6 +283,14 @@ class JiraFetcher:
         # Use hash to generate consistent numeric ID
         hash_value = int(hashlib.md5(url.encode()).hexdigest()[:6], 16)
         return f"org_{hash_value % 1000000}"
+
+    def _format_issue_name(self, issue: Dict[str, Any]) -> str:
+        """Format an issue name according to the Jira task naming setting."""
+        summary = issue['summary']
+        if not self.prefix_issue_key_to_task_name:
+            return summary
+
+        return f"[{issue['key']}] {summary}".rstrip()
     
     def fetch_all_data(self) -> List[Dict[str, Any]]:
         """
@@ -347,9 +372,11 @@ class JiraFetcher:
                             # If epic is completed, keep default (project as parent)
                         
                         flattened_data.append({
-                            'name': issue['summary'],
+                            'name': self._format_issue_name(issue),
                             'task_id': issue_task_id,
-                            'parent_id': parent_id
+                            'parent_id': parent_id,
+                            'original_estimate': issue.get('original_estimate'),
+                            'original_estimate_seconds': issue.get('original_estimate_seconds'),
                         })
                 
             except Exception as e:

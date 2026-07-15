@@ -104,6 +104,42 @@ class TimeCampClientTest(unittest.TestCase):
             ],
         )
 
+    def test_update_task_estimate_uses_v3_billing_settings_endpoint(self):
+        calls = []
+
+        class FakeClient(TimeCampClient):
+            def __init__(self):
+                pass
+
+            def _request(self, method, endpoint, json=None, params=None):
+                calls.append(
+                    {
+                        "method": method,
+                        "endpoint": endpoint,
+                        "json": json,
+                        "params": params,
+                    }
+                )
+                return {"data": {"budget": 2700, "budgetUnit": "hours"}}
+
+        response = FakeClient().update_task_estimate(456, 2700)
+
+        self.assertEqual(
+            response,
+            {"data": {"budget": 2700, "budgetUnit": "hours"}},
+        )
+        self.assertEqual(
+            calls,
+            [
+                {
+                    "method": "PATCH",
+                    "endpoint": "v3/task/456/billing-settings",
+                    "json": {"budget": 2700, "budgetUnit": "hours"},
+                    "params": None,
+                }
+            ],
+        )
+
     def test_update_time_entry_task_uses_v3_endpoint(self):
         calls = []
 

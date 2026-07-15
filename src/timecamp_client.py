@@ -174,6 +174,24 @@ class TimeCampClient:
             },
         )
 
+    def update_task_estimate(
+        self,
+        task_id: Any,
+        original_estimate_seconds: int,
+    ) -> Any:
+        estimate_seconds = int(original_estimate_seconds)
+        if estimate_seconds < 0:
+            raise ValueError("Task estimate cannot be negative")
+
+        return self._request(
+            "PATCH",
+            f"v3/task/{task_id}/billing-settings",
+            json={
+                "budget": estimate_seconds,
+                "budgetUnit": "hours",
+            },
+        )
+
     def get_tag_lists(self, include_tags: bool = True) -> Dict[str, Dict[str, Any]]:
         params: Dict[str, Any] = {}
         if include_tags:

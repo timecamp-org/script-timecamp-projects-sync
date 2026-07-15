@@ -111,7 +111,16 @@ Set `TIMECAMP_SYNC_ACTIONS` to a comma-separated list to run only selected actio
 TIMECAMP_SYNC_ACTIONS=tags,mandatory_tags,users uv run --env-file .env --with-requirements requirements.txt python sync_projects.py
 ```
 
-Available actions are `tasks`, `archive`, `tags`, `mandatory_tags`, and `users`.
+Available actions are `tasks`, `estimates`, `archive`, `tags`, `mandatory_tags`,
+and `users`. The `estimates` action copies non-null `original_estimate_seconds`
+values to TimeCamp task hour budgets. It compares against the budget data already
+returned by the bulk task request and only sends v3 updates for changed values.
+
+Run only estimate synchronization:
+
+```bash
+TIMECAMP_SYNC_ACTIONS=estimates uv run --env-file .env --with-requirements requirements.txt python sync_projects.py
+```
 
 Mandatory tag assignment checks use a local cache at
 `data/timecamp_mandatory_tag_cache.json` by default. The first run still checks

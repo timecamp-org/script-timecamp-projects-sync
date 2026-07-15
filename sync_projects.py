@@ -42,6 +42,7 @@ DEFAULT_HIERARCHY_PREVIEW_LIMIT = 50
 TASK_PROGRESS_LOG_INTERVAL = 100
 DEFAULT_SYNC_ACTIONS = {
     "tasks",
+    "estimates",
     "archive",
     "tags",
     "mandatory_tags",
@@ -49,6 +50,7 @@ DEFAULT_SYNC_ACTIONS = {
 }
 SYNC_ACTION_ORDER = (
     "tasks",
+    "estimates",
     "tags",
     "mandatory_tags",
     "users",
@@ -56,6 +58,7 @@ SYNC_ACTION_ORDER = (
 )
 SYNC_ACTION_DESCRIPTIONS = {
     "tasks": "Create missing TimeCamp tasks",
+    "estimates": "Sync source estimates to TimeCamp task hour budgets",
     "tags": "Create or restore mandatory tag lists and tags",
     "mandatory_tags": "Assign mandatory tags to TimeCamp tasks",
     "users": "Assign users to TimeCamp tasks",
@@ -64,6 +67,9 @@ SYNC_ACTION_DESCRIPTIONS = {
 SYNC_ACTION_ALIASES = {
     "create_tasks": "tasks",
     "task_creation": "tasks",
+    "estimate": "estimates",
+    "task_estimates": "estimates",
+    "budgets": "estimates",
     "archive_tasks": "archive",
     "tag": "tags",
     "meandatory_tags": "mandatory_tags",
@@ -402,6 +408,34 @@ def _int_or_none(value):
         return None
 
 
+def get_source_original_estimate_seconds(task):
+    value = task.get("original_estimate_seconds")
+    if value is None:
+        return None
+
+    if isinstance(value, bool):
+        raise ValueError("original_estimate_seconds must be a non-negative integer")
+
+    try:
+        estimate_seconds = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "original_estimate_seconds must be a non-negative integer"
+        ) from exc
+
+    if estimate_seconds < 0 or str(estimate_seconds) != str(value).strip():
+        raise ValueError("original_estimate_seconds must be a non-negative integer")
+
+    return estimate_seconds
+
+
+def timecamp_estimate_matches(timecamp_task, estimate_seconds):
+    return (
+        _int_or_none(timecamp_task.get("budgeted")) == estimate_seconds
+        and str(timecamp_task.get("budget_unit") or "").casefold() == "hours"
+    )
+
+
 def print_api_metrics_delta(label, start_metrics, end_metrics):
     delta = api_metrics_delta(start_metrics, end_metrics)
     counts = delta["counts"]
@@ -532,6 +566,9 @@ def sync_hierarchical_tasks_to_timecamp(
     unassigned_users_count = 0
     skipped_user_sync_no_users = 0
     user_assignment_errors = 0
+    estimates_updated = 0
+    estimates_current = 0
+    estimate_errors = 0
     
     print("Starting hierarchical task synchronization to TimeCamp...")
     api_metrics_before_task_loop = get_api_metrics_snapshot(client)
@@ -575,6 +612,14 @@ def sync_hierarchical_tasks_to_timecamp(
     )
     print(f"- Existing TimeCamp source matches: {len(timecamp_tasks_map)}")
     print(f"- Missing TimeCamp tasks: {missing_timecamp_task_count} ({missing_task_action})")
+
+    if "estimates" in enabled_actions:
+        estimated_source_task_count = sum(
+            1
+            for task in azure_tasks_sorted
+            if task.get("original_estimate_seconds") is not None
+        )
+        print(f"- Tasks with source estimates: {estimated_source_task_count}")
 
     if "mandatory_tags" in enabled_actions:
         mandatory_tag_task_count = sum(
@@ -621,10 +666,17 @@ def sync_hierarchical_tasks_to_timecamp(
                 api_metrics_before_task_loop,
                 get_api_metrics_snapshot(client),
             )
+            estimate_progress = ""
+            if "estimates" in enabled_actions:
+                estimate_progress = (
+                    f"estimates_updated={estimates_updated}, "
+                    f"estimates_current={estimates_current}, "
+                )
             print(
                 f"Processed {processed_count}/{len(azure_tasks_sorted)} task(s): "
                 f"created={created_tasks}, existing={existing_tasks}, "
                 f"missing_skipped={skipped_missing_tasks}, "
+                f"{estimate_progress}"
                 f"mandatory_tags={assigned_mandatory_tags}, "
                 f"mandatory_tag_cache_skips={skipped_mandatory_tag_cache}, "
                 f"users_assigned={assigned_users_count}, "
@@ -676,6 +728,27 @@ def sync_hierarchical_tasks_to_timecamp(
             existing_task = timecamp_tasks_map[external_id]
             source_to_timecamp_map[task['task_id']] = existing_task['task_id']
             existing_tasks += 1
+
+        if "estimates" in enabled_actions:
+            try:
+                estimate_seconds = get_source_original_estimate_seconds(task)
+                if estimate_seconds is not None:
+                    timecamp_task = timecamp_tasks_map[external_id]
+                    if timecamp_estimate_matches(timecamp_task, estimate_seconds):
+                        estimates_current += 1
+                    else:
+                        client.update_task_estimate(
+                            timecamp_task["task_id"],
+                            estimate_seconds,
+                        )
+                        timecamp_task["budgeted"] = estimate_seconds
+                        timecamp_task["budget_unit"] = "hours"
+                        estimates_updated += 1
+            except Exception as e:
+                if isinstance(e, TimeCampRateLimitError):
+                    stop_on_rate_limit(e)
+                estimate_errors += 1
+                print(f"Error syncing estimate for task {task['name']}: {e}")
 
         if "mandatory_tags" in enabled_actions and get_task_mandatory_tags(task):
             try:
@@ -818,13 +891,18 @@ def sync_hierarchical_tasks_to_timecamp(
     
     print(f"\nSynchronization completed successfully!")
     print(f"- Created: {created_tasks} new tasks")
-    print(f"- Existing: {existing_tasks} tasks (no change needed)")
+    print(f"- Existing source matches: {existing_tasks} tasks")
     print(f"- Archived: {archived_tasks} obsolete tasks")
     if "tasks" not in enabled_actions:
         print("- Task creation skipped because tasks action is disabled")
         print(f"- Missing TimeCamp tasks skipped: {skipped_missing_tasks}")
     if "archive" not in enabled_actions:
         print("- Task archiving skipped because archive action is disabled")
+    if "estimates" in enabled_actions:
+        print(f"- Estimates updated: {estimates_updated}")
+        print(f"- Estimates already current: {estimates_current}")
+        if estimate_errors:
+            print(f"- Estimate sync errors: {estimate_errors}")
     print(f"- Mandatory tags assigned/updated: {assigned_mandatory_tags}")
     if "mandatory_tags" in enabled_actions:
         print(f"- Mandatory tag cache skips: {skipped_mandatory_tag_cache}")
@@ -880,6 +958,12 @@ def show_sync_preview(
     assigned_user_task_count = sum(1 for task in tasks if get_task_assigned_users(task))
     if assigned_user_task_count:
         print(f"  - Tasks with assigned users: {assigned_user_task_count}")
+
+    estimated_task_count = sum(
+        1 for task in tasks if task.get("original_estimate_seconds") is not None
+    )
+    if estimated_task_count:
+        print(f"  - Tasks with source estimates: {estimated_task_count}")
     
     print("\nHierarchy preview:")
     printed_task_count = 0
