@@ -1,9 +1,20 @@
 import unittest
 
-from src.timecamp_client import TimeCampClient
+from src.timecamp_client import TimeCampClient, normalize_timecamp_task_name
 
 
 class TimeCampClientTest(unittest.TestCase):
+    def test_normalize_timecamp_task_name_matches_stored_representation(self):
+        source_name = "  Alpha\t| Beta → Gamma  " + ("x" * 200)
+
+        self.assertEqual(
+            normalize_timecamp_task_name(source_name),
+            ("Alpha  Beta  Gamma  " + ("x" * 200))[:190],
+        )
+
+    def test_normalize_timecamp_task_name_handles_none(self):
+        self.assertEqual(normalize_timecamp_task_name(None), "")
+
     def test_request_records_api_metrics_with_normalized_endpoint(self):
         class FakeResponse:
             status_code = 200

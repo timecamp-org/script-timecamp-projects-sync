@@ -286,6 +286,11 @@ class SyncProjectsCliTest(unittest.TestCase):
                         "external_task_id": "source_changed",
                         "name": "Old task name",
                     },
+                    {
+                        "task_id": 103,
+                        "external_task_id": "source_sanitized",
+                        "name": "[TCD-3] " + ("x" * 182),
+                    },
                 ]
 
             def _record_api_call(self, key):
@@ -318,7 +323,13 @@ class SyncProjectsCliTest(unittest.TestCase):
                 "task_id": "source_changed",
                 "external_task_id": "source_changed",
                 "parent_id": 0,
-                "name": "[TCD-2] New task name",
+                "name": " [TCD-2] New | task → name ",
+            },
+            {
+                "task_id": "source_sanitized",
+                "external_task_id": "source_sanitized",
+                "parent_id": 0,
+                "name": "  [TCD-3]\t" + ("x" * 200),
             },
         ]
         client = FakeClient()
@@ -344,17 +355,57 @@ class SyncProjectsCliTest(unittest.TestCase):
                     False,
                 )
 
-        self.assertEqual(client.name_updates, [(102, "[TCD-2] New task name")])
+        self.assertEqual(client.name_updates, [(102, "[TCD-2] New  task  name")])
         self.assertIn("- Task name updates needed: 1", first_output.getvalue())
         self.assertIn("- Names updated: 1", first_output.getvalue())
-        self.assertIn("- Names already current: 1", first_output.getvalue())
+        self.assertIn("- Names already current: 2", first_output.getvalue())
         self.assertIn("- Task name updates needed: 0", second_output.getvalue())
         self.assertIn("- Names updated: 0", second_output.getvalue())
-        self.assertIn("- Names already current: 2", second_output.getvalue())
+        self.assertIn("- Names already current: 3", second_output.getvalue())
         self.assertIn(
             "API calls during task loop: no tracked API calls",
             second_output.getvalue(),
         )
+
+    def test_new_task_uses_timecamp_normalized_name(self):
+        class FakeClient:
+            def __init__(self):
+                self.created_names = []
+
+            def get_tasks(self):
+                return []
+
+            def get_api_metrics_snapshot(self):
+                return {"counts": {}, "seconds": {}}
+
+            def create_task(self, name, parent_id, external_task_id):
+                self.created_names.append(name)
+                return {
+                    "task_id": 201,
+                    "external_task_id": external_task_id,
+                    "name": name,
+                }
+
+        source_task = {
+            "task_id": "source_new",
+            "external_task_id": "source_new",
+            "parent_id": 0,
+            "name": " New | task → name ",
+        }
+        client = FakeClient()
+
+        with (
+            patch.object(sync_projects, "TIMECAMP_API_TOKEN", "token"),
+            patch.object(sync_projects, "load_tasks_from_json", return_value=[source_task]),
+            patch.object(sync_projects, "TimeCampClient", return_value=client),
+        ):
+            sync_projects.sync_hierarchical_tasks_to_timecamp(
+                {"tasks"},
+                "tasks.json",
+                False,
+            )
+
+        self.assertEqual(client.created_names, ["New  task  name"])
 
     def test_new_task_gets_source_estimate_after_creation(self):
         class FakeClient:

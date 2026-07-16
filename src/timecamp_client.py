@@ -7,6 +7,21 @@ import requests
 
 TIMECAMP_API_BASE_URL = "https://app.timecamp.com/third_party/api"
 TIMECAMP_INTERNAL_API_BASE_URL = "https://app.timecamp.com/internal/api"
+TIMECAMP_TASK_NAME_MAX_LENGTH = 190
+
+
+def normalize_timecamp_task_name(name: Any) -> str:
+    """Return the task name representation stored by TimeCamp."""
+    if name is None:
+        return ""
+
+    return (
+        str(name)
+        .replace("\t", " ")
+        .replace("|", "")
+        .replace("→", "")
+        .strip()[:TIMECAMP_TASK_NAME_MAX_LENGTH]
+    )
 
 
 class TimeCampRateLimitError(Exception):
@@ -149,8 +164,12 @@ class TimeCampClient:
         parent_id: int,
         external_task_id: str,
     ) -> Dict[str, Any]:
+        task_name = normalize_timecamp_task_name(name)
+        if not task_name:
+            raise ValueError("Task name cannot be empty")
+
         data = {
-            "name": name,
+            "name": task_name,
             "parent_id": int(parent_id),
             "external_task_id": external_task_id,
         }
@@ -175,10 +194,8 @@ class TimeCampClient:
         )
 
     def update_task_name(self, task_id: Any, name: str) -> Any:
-        if name is None:
-            raise ValueError("Task name cannot be empty")
-        task_name = str(name)
-        if not task_name.strip():
+        task_name = normalize_timecamp_task_name(name)
+        if not task_name:
             raise ValueError("Task name cannot be empty")
 
         return self._request(

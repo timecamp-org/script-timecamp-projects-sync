@@ -21,7 +21,11 @@ from src.mandatory_tags import (
     get_task_mandatory_tags,
     sync_mandatory_tags_to_task,
 )
-from src.timecamp_client import TimeCampClient, TimeCampRateLimitError
+from src.timecamp_client import (
+    TimeCampClient,
+    TimeCampRateLimitError,
+    normalize_timecamp_task_name,
+)
 
 # Load environment variables
 if load_dotenv:
@@ -443,7 +447,10 @@ def timecamp_estimate_matches(timecamp_task, estimate_seconds):
 
 
 def timecamp_name_matches(timecamp_task, source_name):
-    return str(timecamp_task.get("name") or "") == str(source_name)
+    return (
+        str(timecamp_task.get("name") or "")
+        == normalize_timecamp_task_name(source_name)
+    )
 
 
 def print_api_metrics_delta(label, start_metrics, end_metrics):
@@ -743,14 +750,15 @@ def sync_hierarchical_tasks_to_timecamp(
             print(f"Creating {task_type} task: {task['name']}")
             
             try:
+                timecamp_name = normalize_timecamp_task_name(task["name"])
                 new_task = client.create_task(
-                    name=task['name'],
+                    name=timecamp_name,
                     parent_id=parent_timecamp_id,
                     external_task_id=external_id
                 )
                 source_to_timecamp_map[task['task_id']] = new_task['task_id']
                 new_task.setdefault("users", {})
-                new_task["name"] = task["name"]
+                new_task["name"] = timecamp_name
                 timecamp_tasks_map[external_id] = new_task
                 created_tasks += 1
             except Exception as e:
@@ -768,14 +776,15 @@ def sync_hierarchical_tasks_to_timecamp(
             try:
                 timecamp_task = timecamp_tasks_map[external_id]
                 source_name = task["name"]
+                timecamp_name = normalize_timecamp_task_name(source_name)
                 if timecamp_name_matches(timecamp_task, source_name):
                     names_current += 1
                 else:
                     client.update_task_name(
                         timecamp_task["task_id"],
-                        source_name,
+                        timecamp_name,
                     )
-                    timecamp_task["name"] = source_name
+                    timecamp_task["name"] = timecamp_name
                     names_updated += 1
             except Exception as e:
                 if isinstance(e, TimeCampRateLimitError):
