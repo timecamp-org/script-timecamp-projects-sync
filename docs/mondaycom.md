@@ -23,7 +23,7 @@ Optional config:
 
 ```bash
 # Run only selected sync steps. Default is all actions.
-TIMECAMP_SYNC_ACTIONS=tasks,estimates,archive,tags,mandatory_tags,users
+TIMECAMP_SYNC_ACTIONS=tasks,names,estimates,archive,tags,mandatory_tags,users
 
 # Useful for updating tags/users without creating or archiving tasks.
 TIMECAMP_SYNC_ACTIONS=tags,mandatory_tags,users
@@ -42,8 +42,8 @@ TIMECAMP_MANDATORY_TAG_CACHE_FILE=data/timecamp_mandatory_tag_cache.json
 TIMECAMP_STRICT_USER_SYNC=true
 ```
 
-Available `TIMECAMP_SYNC_ACTIONS`: `tasks`, `estimates`, `archive`, `tags`,
-`mandatory_tags`, `users`.
+Available `TIMECAMP_SYNC_ACTIONS`: `tasks`, `names`, `estimates`, `archive`,
+`tags`, `mandatory_tags`, `users`.
 
 ## Manual Run
 

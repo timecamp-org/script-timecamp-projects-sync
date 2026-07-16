@@ -140,6 +140,45 @@ class TimeCampClientTest(unittest.TestCase):
             ],
         )
 
+    def test_update_task_name_sends_only_task_id_and_changed_name(self):
+        calls = []
+
+        class FakeClient(TimeCampClient):
+            def __init__(self):
+                pass
+
+            def _request(self, method, endpoint, json=None, params=None):
+                calls.append(
+                    {
+                        "method": method,
+                        "endpoint": endpoint,
+                        "json": json,
+                        "params": params,
+                    }
+                )
+                return {"task_id": "456", "name": "[TCD-123] Task name"}
+
+        response = FakeClient().update_task_name(456, "[TCD-123] Task name")
+
+        self.assertEqual(
+            response,
+            {"task_id": "456", "name": "[TCD-123] Task name"},
+        )
+        self.assertEqual(
+            calls,
+            [
+                {
+                    "method": "PUT",
+                    "endpoint": "tasks",
+                    "json": {
+                        "task_id": 456,
+                        "name": "[TCD-123] Task name",
+                    },
+                    "params": None,
+                }
+            ],
+        )
+
     def test_update_time_entry_task_uses_v3_endpoint(self):
         calls = []
 

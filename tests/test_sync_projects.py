@@ -269,6 +269,93 @@ class SyncProjectsCliTest(unittest.TestCase):
             output.getvalue(),
         )
 
+    def test_name_sync_updates_only_real_mismatches_and_is_idempotent(self):
+        class FakeClient:
+            def __init__(self):
+                self.counts = {}
+                self.seconds = {}
+                self.name_updates = []
+                self.tasks = [
+                    {
+                        "task_id": 101,
+                        "external_task_id": "source_current",
+                        "name": "[TCD-1] Already current",
+                    },
+                    {
+                        "task_id": 102,
+                        "external_task_id": "source_changed",
+                        "name": "Old task name",
+                    },
+                ]
+
+            def _record_api_call(self, key):
+                self.counts[key] = self.counts.get(key, 0) + 1
+                self.seconds[key] = self.seconds.get(key, 0.0) + 1.0
+
+            def get_api_metrics_snapshot(self):
+                return {
+                    "counts": dict(self.counts),
+                    "seconds": dict(self.seconds),
+                }
+
+            def get_tasks(self):
+                self._record_api_call("GET tasks")
+                return self.tasks
+
+            def update_task_name(self, task_id, name):
+                self._record_api_call("PUT tasks")
+                self.name_updates.append((task_id, name))
+                return {}
+
+        source_tasks = [
+            {
+                "task_id": "source_current",
+                "external_task_id": "source_current",
+                "parent_id": 0,
+                "name": "[TCD-1] Already current",
+            },
+            {
+                "task_id": "source_changed",
+                "external_task_id": "source_changed",
+                "parent_id": 0,
+                "name": "[TCD-2] New task name",
+            },
+        ]
+        client = FakeClient()
+
+        with (
+            patch.object(sync_projects, "TIMECAMP_API_TOKEN", "token"),
+            patch.object(sync_projects, "load_tasks_from_json", return_value=source_tasks),
+            patch.object(sync_projects, "TimeCampClient", return_value=client),
+        ):
+            first_output = io.StringIO()
+            with redirect_stdout(first_output):
+                sync_projects.sync_hierarchical_tasks_to_timecamp(
+                    {"names"},
+                    "tasks.json",
+                    False,
+                )
+
+            second_output = io.StringIO()
+            with redirect_stdout(second_output):
+                sync_projects.sync_hierarchical_tasks_to_timecamp(
+                    {"names"},
+                    "tasks.json",
+                    False,
+                )
+
+        self.assertEqual(client.name_updates, [(102, "[TCD-2] New task name")])
+        self.assertIn("- Task name updates needed: 1", first_output.getvalue())
+        self.assertIn("- Names updated: 1", first_output.getvalue())
+        self.assertIn("- Names already current: 1", first_output.getvalue())
+        self.assertIn("- Task name updates needed: 0", second_output.getvalue())
+        self.assertIn("- Names updated: 0", second_output.getvalue())
+        self.assertIn("- Names already current: 2", second_output.getvalue())
+        self.assertIn(
+            "API calls during task loop: no tracked API calls",
+            second_output.getvalue(),
+        )
+
     def test_new_task_gets_source_estimate_after_creation(self):
         class FakeClient:
             def __init__(self):

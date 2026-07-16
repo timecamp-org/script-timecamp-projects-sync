@@ -79,7 +79,8 @@ part of the existing bulk issue search, so it does not add per-issue API calls.
 
 3. `python sync_projects.py` (by default looks for `tasks.json`). Jira estimates
    are synchronized to TimeCamp task hour budgets through the v3 billing-settings
-   endpoint. Tasks without a Jira estimate are left unchanged.
+   endpoint. Tasks without a Jira estimate are left unchanged. Existing TimeCamp
+   names are updated only when they differ from the fetched Jira names.
 
 ## Someday
 

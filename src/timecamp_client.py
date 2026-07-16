@@ -174,6 +174,22 @@ class TimeCampClient:
             },
         )
 
+    def update_task_name(self, task_id: Any, name: str) -> Any:
+        if name is None:
+            raise ValueError("Task name cannot be empty")
+        task_name = str(name)
+        if not task_name.strip():
+            raise ValueError("Task name cannot be empty")
+
+        return self._request(
+            "PUT",
+            "tasks",
+            json={
+                "task_id": task_id,
+                "name": task_name,
+            },
+        )
+
     def update_task_estimate(
         self,
         task_id: Any,

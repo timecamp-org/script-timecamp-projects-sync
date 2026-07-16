@@ -42,6 +42,7 @@ DEFAULT_HIERARCHY_PREVIEW_LIMIT = 50
 TASK_PROGRESS_LOG_INTERVAL = 100
 DEFAULT_SYNC_ACTIONS = {
     "tasks",
+    "names",
     "estimates",
     "archive",
     "tags",
@@ -50,6 +51,7 @@ DEFAULT_SYNC_ACTIONS = {
 }
 SYNC_ACTION_ORDER = (
     "tasks",
+    "names",
     "estimates",
     "tags",
     "mandatory_tags",
@@ -58,6 +60,7 @@ SYNC_ACTION_ORDER = (
 )
 SYNC_ACTION_DESCRIPTIONS = {
     "tasks": "Create missing TimeCamp tasks",
+    "names": "Update changed TimeCamp task names",
     "estimates": "Sync source estimates to TimeCamp task hour budgets",
     "tags": "Create or restore mandatory tag lists and tags",
     "mandatory_tags": "Assign mandatory tags to TimeCamp tasks",
@@ -67,6 +70,9 @@ SYNC_ACTION_DESCRIPTIONS = {
 SYNC_ACTION_ALIASES = {
     "create_tasks": "tasks",
     "task_creation": "tasks",
+    "name": "names",
+    "task_names": "names",
+    "rename_tasks": "names",
     "estimate": "estimates",
     "task_estimates": "estimates",
     "budgets": "estimates",
@@ -436,6 +442,10 @@ def timecamp_estimate_matches(timecamp_task, estimate_seconds):
     )
 
 
+def timecamp_name_matches(timecamp_task, source_name):
+    return str(timecamp_task.get("name") or "") == str(source_name)
+
+
 def print_api_metrics_delta(label, start_metrics, end_metrics):
     delta = api_metrics_delta(start_metrics, end_metrics)
     counts = delta["counts"]
@@ -566,6 +576,9 @@ def sync_hierarchical_tasks_to_timecamp(
     unassigned_users_count = 0
     skipped_user_sync_no_users = 0
     user_assignment_errors = 0
+    names_updated = 0
+    names_current = 0
+    name_errors = 0
     estimates_updated = 0
     estimates_current = 0
     estimate_errors = 0
@@ -612,6 +625,20 @@ def sync_hierarchical_tasks_to_timecamp(
     )
     print(f"- Existing TimeCamp source matches: {len(timecamp_tasks_map)}")
     print(f"- Missing TimeCamp tasks: {missing_timecamp_task_count} ({missing_task_action})")
+
+    if "names" in enabled_actions:
+        name_update_candidate_count = sum(
+            1
+            for task in azure_tasks_sorted
+            if (
+                get_source_external_task_id(task) in timecamp_tasks_map
+                and not timecamp_name_matches(
+                    timecamp_tasks_map[get_source_external_task_id(task)],
+                    task["name"],
+                )
+            )
+        )
+        print(f"- Task name updates needed: {name_update_candidate_count}")
 
     if "estimates" in enabled_actions:
         estimated_source_task_count = sum(
@@ -672,10 +699,17 @@ def sync_hierarchical_tasks_to_timecamp(
                     f"estimates_updated={estimates_updated}, "
                     f"estimates_current={estimates_current}, "
                 )
+            name_progress = ""
+            if "names" in enabled_actions:
+                name_progress = (
+                    f"names_updated={names_updated}, "
+                    f"names_current={names_current}, "
+                )
             print(
                 f"Processed {processed_count}/{len(azure_tasks_sorted)} task(s): "
                 f"created={created_tasks}, existing={existing_tasks}, "
                 f"missing_skipped={skipped_missing_tasks}, "
+                f"{name_progress}"
                 f"{estimate_progress}"
                 f"mandatory_tags={assigned_mandatory_tags}, "
                 f"mandatory_tag_cache_skips={skipped_mandatory_tag_cache}, "
@@ -716,6 +750,7 @@ def sync_hierarchical_tasks_to_timecamp(
                 )
                 source_to_timecamp_map[task['task_id']] = new_task['task_id']
                 new_task.setdefault("users", {})
+                new_task["name"] = task["name"]
                 timecamp_tasks_map[external_id] = new_task
                 created_tasks += 1
             except Exception as e:
@@ -728,6 +763,25 @@ def sync_hierarchical_tasks_to_timecamp(
             existing_task = timecamp_tasks_map[external_id]
             source_to_timecamp_map[task['task_id']] = existing_task['task_id']
             existing_tasks += 1
+
+        if "names" in enabled_actions:
+            try:
+                timecamp_task = timecamp_tasks_map[external_id]
+                source_name = task["name"]
+                if timecamp_name_matches(timecamp_task, source_name):
+                    names_current += 1
+                else:
+                    client.update_task_name(
+                        timecamp_task["task_id"],
+                        source_name,
+                    )
+                    timecamp_task["name"] = source_name
+                    names_updated += 1
+            except Exception as e:
+                if isinstance(e, TimeCampRateLimitError):
+                    stop_on_rate_limit(e)
+                name_errors += 1
+                print(f"Error syncing name for task {task['name']}: {e}")
 
         if "estimates" in enabled_actions:
             try:
@@ -898,6 +952,11 @@ def sync_hierarchical_tasks_to_timecamp(
         print(f"- Missing TimeCamp tasks skipped: {skipped_missing_tasks}")
     if "archive" not in enabled_actions:
         print("- Task archiving skipped because archive action is disabled")
+    if "names" in enabled_actions:
+        print(f"- Names updated: {names_updated}")
+        print(f"- Names already current: {names_current}")
+        if name_errors:
+            print(f"- Name sync errors: {name_errors}")
     if "estimates" in enabled_actions:
         print(f"- Estimates updated: {estimates_updated}")
         print(f"- Estimates already current: {estimates_current}")

@@ -100,9 +100,9 @@ uv run --with-requirements requirements.txt python export_monday_time_logged.py 
 
 ### Limiting TimeCamp Sync Actions
 
-By default, `sync_projects.py` runs all actions: creating missing tasks, archiving stale
-tasks, creating/restoring mandatory tag lists and tags, assigning mandatory tags to tasks,
-and assigning users to tasks.
+By default, `sync_projects.py` runs all actions: creating missing tasks, updating changed
+names and estimates, archiving stale tasks, creating/restoring mandatory tag lists and
+tags, assigning mandatory tags to tasks, and assigning users to tasks.
 
 Set `TIMECAMP_SYNC_ACTIONS` to a comma-separated list to run only selected actions:
 
@@ -111,10 +111,18 @@ Set `TIMECAMP_SYNC_ACTIONS` to a comma-separated list to run only selected actio
 TIMECAMP_SYNC_ACTIONS=tags,mandatory_tags,users uv run --env-file .env --with-requirements requirements.txt python sync_projects.py
 ```
 
-Available actions are `tasks`, `estimates`, `archive`, `tags`, `mandatory_tags`,
-and `users`. The `estimates` action copies non-null `original_estimate_seconds`
-values to TimeCamp task hour budgets. It compares against the budget data already
-returned by the bulk task request and only sends v3 updates for changed values.
+Available actions are `tasks`, `names`, `estimates`, `archive`, `tags`,
+`mandatory_tags`, and `users`. The `names` action updates a TimeCamp task only
+when its name differs from the source name. The `estimates` action copies non-null
+`original_estimate_seconds` values to TimeCamp task hour budgets. Both actions
+compare against data already returned by the bulk task request and only send
+updates for changed values.
+
+Run only task-name synchronization:
+
+```bash
+TIMECAMP_SYNC_ACTIONS=names uv run --env-file .env --with-requirements requirements.txt python sync_projects.py
+```
 
 Run only estimate synchronization:
 
