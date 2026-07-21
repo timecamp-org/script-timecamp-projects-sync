@@ -72,6 +72,24 @@ python3 fetch_zendesk.py
 python3 sync_projects.py
 ```
 
+### Datadog → TimeCamp Synchronization
+
+Set `DD_API_KEY` and `DD_APP_KEY`. For a Datadog site outside US1, also set
+`DD_SITE` to its domain, such as `datadoghq.eu`.
+
+```bash
+python3 fetch_datadog.py --output tasks.json
+python3 sync_projects.py --input tasks.json
+```
+
+The fetcher imports active Datadog Case Management cases under their projects
+and active or stable incidents under their alphabetically first affected service.
+Closed, resolved, completed, and archived records are omitted so the TimeCamp
+sync can archive work that is no longer active.
+
+See [`docs/datadog.md`](docs/datadog.md) for the hierarchy and short external ID
+contract, required Datadog permissions, and local usage.
+
 ### TimeCamp → TimeCamp Synchronization
 
 ```bash
