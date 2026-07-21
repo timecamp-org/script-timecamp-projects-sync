@@ -88,8 +88,7 @@ Closed, resolved, completed, and archived records are omitted so the TimeCamp
 sync can archive work that is no longer active.
 
 See [`docs/datadog.md`](docs/datadog.md) for the hierarchy and short external ID
-contract, required Datadog permissions, Docker usage, and Kubernetes CronJob
-deployment.
+contract, required Datadog permissions, and local usage.
 
 ### TimeCamp → TimeCamp Synchronization
 
