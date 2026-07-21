@@ -1,0 +1,63 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: timecamp-datadog-sync
+  labels:
+    app.kubernetes.io/name: timecamp-datadog-sync
+spec:
+  schedule: "0 2 * * *"
+  timeZone: Europe/Warsaw
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 1800
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: timecamp-datadog-sync
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: sync
+              image: registry.example.com/timecamp-projects-sync:latest
+              imagePullPolicy: IfNotPresent
+              envFrom:
+                - secretRef:
+                    name: timecamp-datadog-sync
+              env:
+                - name: DD_SITE
+                  value: datadoghq.com
+                - name: TIMECAMP_MANDATORY_TAG_CACHE_FILE
+                  value: /tmp/timecamp_mandatory_tag_cache.json
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              volumeMounts:
+                - name: temporary-files
+                  mountPath: /tmp
+          volumes:
+            - name: temporary-files
+              emptyDir:
+                sizeLimit: 256Mi
