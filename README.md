@@ -29,6 +29,37 @@ This repository contains scripts to automate projects and tasks synchronization 
 
 To set up automatic daily synchronization, you can use a task scheduler like cron (Linux/macOS) or Task Scheduler (Windows).
 
+### `tasks.json` format
+
+`tasks.json` is a JSON array of source tasks. This example contains every key
+consumed by `sync_projects.py`:
+
+```json
+[
+  {
+    "name": "Acme",
+    "task_id": "client_acme",
+    "parent_id": 0
+  },
+  {
+    "name": "Build reporting dashboard",
+    "task_id": "project_42",
+    "parent_id": "client_acme",
+    "original_estimate_seconds": 7200,
+    "mandatory_tags": {
+      "Client": ["Acme"],
+      "Work type": ["Development", "Reporting"]
+    },
+    "assigned_users": {
+      "source_user_id_123": {
+        "email": "developer@example.com",
+        "username": "Developer Name"
+      }
+    }
+  }
+]
+```
+
 ### Harvest ↔ TimeCamp Synchronization
 
 ```bash
