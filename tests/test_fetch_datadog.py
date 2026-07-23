@@ -157,7 +157,9 @@ class DatadogClientTest(unittest.TestCase):
 class DatadogFetcherTest(unittest.TestCase):
     def test_requires_both_credentials(self):
         with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(ValueError, "DD_API_KEY and DD_APP_KEY"):
+            with self.assertRaisesRegex(
+                ValueError, "DATADOG_API_KEY and DATADOG_APP_KEY"
+            ):
                 DatadogFetcher()
 
     def test_builds_filtered_deterministic_hierarchies(self):
@@ -287,7 +289,7 @@ class DatadogFetcherTest(unittest.TestCase):
             with (
                 patch.dict(
                     os.environ,
-                    {"DD_API_KEY": "api", "DD_APP_KEY": "app"},
+                    {"DATADOG_API_KEY": "api", "DATADOG_APP_KEY": "app"},
                     clear=True,
                 ),
                 patch.object(

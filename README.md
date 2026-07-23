@@ -74,8 +74,8 @@ python3 sync_projects.py
 
 ### Datadog → TimeCamp Synchronization
 
-Set `DD_API_KEY` and `DD_APP_KEY`. For a Datadog site outside US1, also set
-`DD_SITE` to its domain, such as `datadoghq.eu`.
+Set `DATADOG_API_KEY` and `DATADOG_APP_KEY`. For a Datadog site outside US1,
+also set `DATADOG_SITE` to its domain, such as `datadoghq.eu`.
 
 ```bash
 python3 fetch_datadog.py --output tasks.json

@@ -125,12 +125,14 @@ class DatadogFetcher:
             self.client = client
             return
 
-        api_key = os.getenv("DD_API_KEY")
-        app_key = os.getenv("DD_APP_KEY")
-        site = os.getenv("DD_SITE", "datadoghq.com")
+        api_key = os.getenv("DATADOG_API_KEY")
+        app_key = os.getenv("DATADOG_APP_KEY")
+        site = os.getenv("DATADOG_SITE", "datadoghq.com")
 
         if not api_key or not app_key:
-            raise ValueError("DD_API_KEY and DD_APP_KEY must be set in .env")
+            raise ValueError(
+                "DATADOG_API_KEY and DATADOG_APP_KEY must be set in .env"
+            )
 
         self.client = DatadogClient(api_key, app_key, site)
 
@@ -179,7 +181,7 @@ def normalize_datadog_api_url(site: str) -> str:
 
     hostname = hostname.strip().lower()
     if not hostname:
-        raise ValueError("DD_SITE must contain a valid Datadog site domain")
+        raise ValueError("DATADOG_SITE must contain a valid Datadog site domain")
 
     if not hostname.startswith("api."):
         hostname = f"api.{hostname}"

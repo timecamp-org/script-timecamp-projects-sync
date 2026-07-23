@@ -33,13 +33,13 @@ and [authorization scopes](https://docs.datadoghq.com/api/latest/scopes/).
 Configure:
 
 ```dotenv
-DD_API_KEY=your_datadog_api_key
-DD_APP_KEY=your_datadog_application_key
-DD_SITE=datadoghq.com
+DATADOG_API_KEY=your_datadog_api_key
+DATADOG_APP_KEY=your_datadog_application_key
+DATADOG_SITE=datadoghq.com
 TIMECAMP_API_TOKEN=your_timecamp_api_token
 ```
 
-`DD_SITE` defaults to `datadoghq.com`. Use the domain for your Datadog site,
+`DATADOG_SITE` defaults to `datadoghq.com`. Use the domain for your Datadog site,
 for example `datadoghq.eu` or `us3.datadoghq.com`.
 
 ## Run locally
