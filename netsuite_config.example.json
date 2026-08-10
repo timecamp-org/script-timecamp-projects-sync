@@ -1,0 +1,48 @@
+{
+  "suiteql": {
+    "projects": "SELECT id, entityid AS name, parent AS parent_id FROM job WHERE isinactive = 'F' ORDER BY id",
+    "project_tasks": "SELECT id, title AS name, company AS project_id, parent AS parent_id, estimatedwork AS estimated_work_hours FROM projecttask ORDER BY company, id"
+  },
+  "classification": {
+    "tag_list_name": "CAPEX / OPEX",
+    "allowed_values": [
+      "CAPEX",
+      "OPEX"
+    ],
+    "required": true,
+    "value_map": {
+      "1": "CAPEX",
+      "2": "OPEX",
+      "capital": "CAPEX",
+      "operating": "OPEX"
+    },
+    "default": null
+  },
+  "time_export": {
+    "record_type": "timebill",
+    "employees_query": "SELECT id, email FROM employee WHERE isinactive = 'F' AND email IS NOT NULL ORDER BY id",
+    "employee_mapping": {},
+    "external_id_prefix": "timecamp-",
+    "duration_rounding": "nearest",
+    "fields": {
+      "employee": "employee",
+      "date": "tranDate",
+      "hours": "hours",
+      "project": "customer",
+      "project_task": "caseTaskEvent",
+      "activity": null,
+      "memo": "memo"
+    },
+    "default_activity_id": null,
+    "classification": {
+      "mode": "field",
+      "field": "REPLACE_WITH_WCG_CAPEX_OPEX_TIMEBILL_FIELD",
+      "value_format": "id",
+      "value_map": {
+        "CAPEX": "REPLACE_WITH_WCG_CAPEX_VALUE_ID",
+        "OPEX": "REPLACE_WITH_WCG_OPEX_VALUE_ID"
+      }
+    },
+    "fixed_fields": {}
+  }
+}

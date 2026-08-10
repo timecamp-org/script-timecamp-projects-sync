@@ -11,6 +11,77 @@ from src.mandatory_tags import MandatoryTagSyncResult, TagDefinition
 
 
 class SyncProjectsCliTest(unittest.TestCase):
+    def test_external_id_prefix_isolates_integration_archive_scope(self):
+        source_ids = {"netsuite_project_1"}
+
+        self.assertTrue(
+            sync_projects.is_timecamp_task_in_sync_scope(
+                "netsuite_project_1", source_ids, "netsuite_"
+            )
+        )
+        self.assertTrue(
+            sync_projects.is_timecamp_task_in_sync_scope(
+                "netsuite_project_2", source_ids, "netsuite_"
+            ),
+            "stale NetSuite tasks must remain visible so archive can find them",
+        )
+        self.assertFalse(
+            sync_projects.is_timecamp_task_in_sync_scope(
+                "sync_jira_1", source_ids, "netsuite_"
+            )
+        )
+
+    def test_default_external_id_scope_remains_backward_compatible(self):
+        source_ids = {"monday_1"}
+
+        self.assertTrue(
+            sync_projects.is_timecamp_task_in_sync_scope(
+                "sync_jira_1", source_ids
+            )
+        )
+        self.assertTrue(
+            sync_projects.is_timecamp_task_in_sync_scope("monday_1", source_ids)
+        )
+        self.assertFalse(
+            sync_projects.is_timecamp_task_in_sync_scope("netsuite_old", source_ids)
+        )
+
+    def test_rejects_source_ids_outside_configured_archive_scope(self):
+        with self.assertRaisesRegex(ValueError, "do not match"):
+            sync_projects.validate_source_external_id_scope(
+                {"netsuite_project_1", "sync_jira_1"},
+                "netsuite_",
+            )
+
+    def test_rejects_wrong_scope_before_any_timecamp_api_call(self):
+        with (
+            patch.object(
+                sync_projects,
+                "load_tasks_from_json",
+                return_value=[
+                    {
+                        "task_id": "jira_1",
+                        "external_task_id": "sync_jira_1",
+                        "parent_id": 0,
+                        "name": "Wrong source",
+                    }
+                ],
+            ),
+            patch.object(
+                sync_projects,
+                "TIMECAMP_SYNC_EXTERNAL_ID_PREFIX",
+                "netsuite_",
+            ),
+            patch.object(sync_projects, "TimeCampClient") as timecamp_client,
+        ):
+            with self.assertRaisesRegex(ValueError, "do not match"):
+                sync_projects.sync_hierarchical_tasks_to_timecamp(
+                    {"tasks"},
+                    "tasks.json",
+                )
+
+        timecamp_client.assert_not_called()
+
     def test_main_uses_input_file_for_preview_and_sync(self):
         with (
             patch.object(sync_projects, "TIMECAMP_API_TOKEN", "token"),
