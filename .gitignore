@@ -22,3 +22,4 @@ tasks.json
 task*.json
 projects.json
 
+netsuite_config.json
