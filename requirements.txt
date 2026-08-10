@@ -3,3 +3,4 @@ requests==2.33.0
 python-dotenv==1.2.2
 azure-devops==7.1.0b3
 jira==3.8.0
+PyJWT[crypto]==2.10.1

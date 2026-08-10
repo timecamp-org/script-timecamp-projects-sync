@@ -147,6 +147,34 @@ uv run --with-requirements requirements.txt python export_monday_time_logged.py 
 uv run --with-requirements requirements.txt python export_monday_time_logged.py --from 2026-06-01 --to 2026-06-18 --column-title "Time Tracked" --include-main-rows
 ```
 
+### NetSuite ↔ TimeCamp POC
+
+The NetSuite integration synchronizes projects and project tasks into TimeCamp,
+then upserts TimeCamp entries as NetSuite `timebill` records. User provisioning
+and project-user assignments are intentionally out of scope; employees are read
+only to resolve the employee reference required by exported time.
+
+```bash
+cp netsuite_config.example.json netsuite_config.json
+
+uv run --env-file .env --with-requirements requirements.txt python fetch_netsuite.py
+TIMECAMP_SYNC_EXTERNAL_ID_PREFIX=netsuite_ \
+  TIMECAMP_SYNC_ACTIONS=tasks,names,estimates,tags,mandatory_tags,archive \
+  uv run --env-file .env --with-requirements requirements.txt python sync_projects.py
+
+# Dry-run by default.
+uv run --env-file .env --with-requirements requirements.txt \
+  python export_time_entries_netsuite.py --from 2026-08-01 --to 2026-08-03
+
+# Write only after the dry-run has no mapping errors.
+uv run --env-file .env --with-requirements requirements.txt \
+  python export_time_entries_netsuite.py --from 2026-08-01 --to 2026-08-03 --apply
+```
+
+See [`docs/netsuite.md`](docs/netsuite.md) for the WCG-specific discovery and
+mapping contract. The example CAPEX/OPEX field IDs are placeholders and must be
+replaced before an applied export.
+
 ### Limiting TimeCamp Sync Actions
 
 By default, `sync_projects.py` runs all actions: creating missing tasks, updating changed

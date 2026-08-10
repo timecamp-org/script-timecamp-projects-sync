@@ -34,6 +34,7 @@ if load_dotenv:
 TIMECAMP_API_TOKEN = os.getenv('TIMECAMP_API_TOKEN')
 TIMECAMP_TASK_ID = os.getenv('TIMECAMP_TASK_ID')
 TIMECAMP_SYNC_ACTIONS = os.getenv('TIMECAMP_SYNC_ACTIONS')
+TIMECAMP_SYNC_EXTERNAL_ID_PREFIX = os.getenv('TIMECAMP_SYNC_EXTERNAL_ID_PREFIX')
 TIMECAMP_STRICT_USER_SYNC = os.getenv('TIMECAMP_STRICT_USER_SYNC')
 TIMECAMP_MAX_MANDATORY_TAGS_TO_ADD = os.getenv('TIMECAMP_MAX_MANDATORY_TAGS_TO_ADD')
 TIMECAMP_MANDATORY_TAG_CACHE_FILE = os.getenv(
@@ -489,6 +490,42 @@ def get_source_external_task_id(task):
 
     return f"sync_{task_id}"
 
+
+def is_timecamp_task_in_sync_scope(
+    external_id,
+    source_external_ids,
+    configured_prefix=None,
+):
+    """Return whether a TimeCamp task is owned by this synchronization run."""
+    if not external_id:
+        return False
+
+    external_id = str(external_id)
+    prefix = str(configured_prefix or "").strip()
+    if prefix:
+        return external_id.startswith(prefix)
+
+    return external_id.startswith('sync_') or external_id in source_external_ids
+
+
+def validate_source_external_id_scope(source_external_ids, configured_prefix=None):
+    prefix = str(configured_prefix or "").strip()
+    if not prefix:
+        return
+
+    out_of_scope = sorted(
+        external_id
+        for external_id in source_external_ids
+        if not str(external_id).startswith(prefix)
+    )
+    if out_of_scope:
+        preview = ", ".join(out_of_scope[:5])
+        raise ValueError(
+            "Source external_task_id values do not match "
+            f"TIMECAMP_SYNC_EXTERNAL_ID_PREFIX={prefix!r}: {preview}"
+        )
+
+
 def load_tasks_from_json(filename=DEFAULT_TASKS_FILE):
     """Load hierarchical tasks from JSON file"""
     try:
@@ -522,6 +559,15 @@ def sync_hierarchical_tasks_to_timecamp(
     if not azure_tasks:
         return
 
+    source_external_ids = {
+        get_source_external_task_id(task)
+        for task in azure_tasks
+    }
+    validate_source_external_id_scope(
+        source_external_ids,
+        TIMECAMP_SYNC_EXTERNAL_ID_PREFIX,
+    )
+
     client = TimeCampClient(TIMECAMP_API_TOKEN)
     api_metrics_before_setup = get_api_metrics_snapshot(client)
     
@@ -549,17 +595,14 @@ def sync_hierarchical_tasks_to_timecamp(
     if "users" in enabled_actions:
         assigned_user_sync = build_assigned_user_sync_result(client, azure_tasks)
 
-    source_external_ids = {
-        get_source_external_task_id(task)
-        for task in azure_tasks
-    }
-    
     # Create mapping of existing TimeCamp tasks by external_task_id
     timecamp_tasks_map = {}
     for entry in timecamp_entries:
         external_id = entry.get('external_task_id')
-        if external_id and (
-            external_id.startswith('sync_') or external_id in source_external_ids
+        if is_timecamp_task_in_sync_scope(
+            external_id,
+            source_external_ids,
+            TIMECAMP_SYNC_EXTERNAL_ID_PREFIX,
         ):
             timecamp_tasks_map[external_id] = entry
     
