@@ -94,7 +94,26 @@ python3 sync_projects.py
 ```bash
 python3 fetch_jira.py
 python3 sync_projects.py
+
+# First TimeCamp → Jira worklog backfill (writes by default)
+uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --from 2026-08-01 --to 2026-08-10
+
+# Later runs export entries changed or deleted since the last successful run
+uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py
+
+# Preview without changing Jira or exporter state
+uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --dry-run
+
+# Preview a two-day export for exactly one TimeCamp user
+uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --from 2026-08-09 --to 2026-08-10 --user-email person@example.com --dry-run
 ```
+
+The Jira token owner is the Jira worklog author. The exporter records the
+original TimeCamp user's display name and email in the comment. It updates,
+moves, or deletes Jira worklogs when the source changes and skips Jira writes
+when the canonical payload is unchanged. See [`docs/jira.md`](docs/jira.md) and
+[`docs/time-entry-sync.md`](docs/time-entry-sync.md) for state, recovery,
+permissions, and the reusable adapter contract.
 
 ### Zendesk → TimeCamp Synchronization
 
