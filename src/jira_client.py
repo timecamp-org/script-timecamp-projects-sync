@@ -2,7 +2,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 import requests
 from jira import JIRA
@@ -108,6 +108,97 @@ def load_jira_instances(raw_json: Optional[str]) -> List[Dict[str, str]]:
         instances.append(instance)
 
     return instances
+
+
+def load_jira_user_api_tokens(
+    raw_json: Optional[str],
+) -> Dict[str, Dict[str, str]]:
+    """Load Jira API tokens keyed by user email and Jira instance URL."""
+    if not raw_json:
+        return {}
+
+    try:
+        data = json.loads(raw_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"JIRA_USER_API_TOKENS is not valid JSON: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            "JIRA_USER_API_TOKENS must be a JSON object mapping user emails "
+            "to API tokens or per-instance API token objects"
+        )
+
+    tokens: Dict[str, Dict[str, str]] = {}
+    for raw_email, raw_credentials in data.items():
+        email = str(raw_email).strip()
+        if not email:
+            raise ValueError("JIRA_USER_API_TOKENS contains an empty user email")
+
+        normalized_email = email.casefold()
+        if normalized_email in tokens:
+            raise ValueError(
+                "JIRA_USER_API_TOKENS contains duplicate user email "
+                f"{email} (email matching is case-insensitive)"
+            )
+
+        if isinstance(raw_credentials, str):
+            if not raw_credentials.strip():
+                raise ValueError(
+                    f"JIRA_USER_API_TOKENS has an empty API token for {email}"
+                )
+            tokens[normalized_email] = {"*": raw_credentials.strip()}
+            continue
+
+        if not isinstance(raw_credentials, dict):
+            raise ValueError(
+                f"JIRA_USER_API_TOKENS value for {email} must be an API token "
+                "string or an object mapping Jira instance URLs to API tokens"
+            )
+        if not raw_credentials:
+            raise ValueError(
+                f"JIRA_USER_API_TOKENS has no API tokens configured for {email}"
+            )
+
+        instance_tokens: Dict[str, str] = {}
+        for raw_instance_url, raw_token in raw_credentials.items():
+            instance_url = _normalize_jira_token_instance(raw_instance_url)
+            if not instance_url:
+                raise ValueError(
+                    f"JIRA_USER_API_TOKENS has an empty Jira instance URL for "
+                    f"{email}"
+                )
+            if not isinstance(raw_token, str) or not raw_token.strip():
+                raise ValueError(
+                    f"JIRA_USER_API_TOKENS has an empty API token for {email} "
+                    f"on {raw_instance_url}"
+                )
+            if instance_url in instance_tokens:
+                raise ValueError(
+                    f"JIRA_USER_API_TOKENS contains duplicate Jira instance URL "
+                    f"{raw_instance_url} for {email}"
+                )
+            instance_tokens[instance_url] = raw_token.strip()
+        tokens[normalized_email] = instance_tokens
+
+    return tokens
+
+
+def jira_user_api_token_for_instance(
+    tokens: Mapping[str, Mapping[str, str]],
+    user_email: Optional[str],
+    instance_url: str,
+) -> Optional[str]:
+    user_tokens = tokens.get(str(user_email or "").strip().casefold(), {})
+    return user_tokens.get(
+        _normalize_jira_token_instance(instance_url)
+    ) or user_tokens.get("*")
+
+
+def _normalize_jira_token_instance(value: Any) -> str:
+    normalized = str(value).strip()
+    if normalized == "*":
+        return normalized
+    return normalized.rstrip("/").casefold()
 
 
 class JiraClient:

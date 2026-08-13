@@ -108,10 +108,16 @@ uv run --env-file .env --with-requirements requirements.txt python export_time_e
 uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --from 2026-08-09 --to 2026-08-10 --user-email person@example.com --dry-run
 ```
 
-The Jira token owner is the Jira worklog author. The exporter records the
-original TimeCamp user's display name and email in the comment. It updates,
-moves, or deletes Jira worklogs when the source changes and skips Jira writes
-when the canonical payload is unchanged. See [`docs/jira.md`](docs/jira.md) and
+Set `JIRA_USER_API_TOKENS` to JSON keyed by user email and Jira base URL, such as
+`{"person@example.com":{"https://one.atlassian.net":"token-one","https://two.atlassian.net":"token-two"}}`,
+to authenticate a filtered `--user-email` export as that Jira user. A string
+value remains shorthand for one token used on every instance. Missing instance
+mappings and unfiltered exports fall back to the root credentials in
+`JIRA_INSTANCES`. The selected token owner is the Jira worklog author. The
+exporter records the original TimeCamp user's display name and email in the
+comment. It updates, moves, or deletes Jira worklogs when the source changes and
+skips Jira writes when the canonical payload is unchanged. See
+[`docs/jira.md`](docs/jira.md) and
 [`docs/time-entry-sync.md`](docs/time-entry-sync.md) for state, recovery,
 permissions, and the reusable adapter contract.
 

@@ -16,7 +16,9 @@ from src.jira_client import (
     JiraIssueTarget,
     generate_jira_org_id,
     is_http_status,
+    jira_user_api_token_for_instance,
     load_jira_instances,
+    load_jira_user_api_tokens,
     parse_jira_issue_external_id,
 )
 from src.jira_export_state import (
@@ -378,6 +380,28 @@ def filtered_state_file(email: str) -> str:
     return common_filtered_state_file("jira", email)
 
 
+def build_jira_clients(
+    instances: List[Mapping[str, str]],
+    *,
+    user_email: Optional[str] = None,
+    user_api_tokens: Optional[Mapping[str, Mapping[str, str]]] = None,
+) -> Dict[str, JiraClient]:
+    clients: Dict[str, JiraClient] = {}
+    for instance in instances:
+        user_token = jira_user_api_token_for_instance(
+            user_api_tokens or {},
+            user_email,
+            instance["url"],
+        )
+        email = str(user_email).strip() if user_token else instance["email"]
+        token = user_token or instance["token"]
+        instance_id = instance.get("instance_id") or generate_jira_org_id(
+            instance["url"]
+        )
+        clients[instance_id] = JiraClient(instance["url"], email, token)
+    return clients
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -414,14 +438,39 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
 
         instances = load_jira_instances(os.getenv("JIRA_INSTANCES"))
-        jira_clients = {
-            generate_jira_org_id(instance["url"]): JiraClient(
-                instance["url"],
-                instance["email"],
-                instance["token"],
-            )
-            for instance in instances
-        }
+        user_api_tokens = load_jira_user_api_tokens(
+            os.getenv("JIRA_USER_API_TOKENS")
+        )
+        jira_clients = build_jira_clients(
+            instances,
+            user_email=args.user_email,
+            user_api_tokens=user_api_tokens,
+        )
+        if args.user_email:
+            personal_instances = []
+            root_instances = []
+            for instance in instances:
+                destination = (
+                    personal_instances
+                    if jira_user_api_token_for_instance(
+                        user_api_tokens,
+                        args.user_email,
+                        instance["url"],
+                    )
+                    else root_instances
+                )
+                destination.append(instance["name"])
+            if personal_instances:
+                print(
+                    f"Using Jira API token for {args.user_email} on: "
+                    f"{', '.join(personal_instances)}."
+                )
+            if root_instances:
+                print(
+                    f"No Jira API token configured for {args.user_email} on: "
+                    f"{', '.join(root_instances)}; using the root credentials "
+                    "from JIRA_INSTANCES."
+                )
         if args.state_file:
             state_path = Path(args.state_file)
         elif args.user_email:

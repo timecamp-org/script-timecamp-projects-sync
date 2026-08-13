@@ -3,17 +3,20 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest.mock import call, patch
 
 import requests
 
 from export_time_entries_jira import (
     JiraTimeEntryExporter,
+    build_jira_clients,
     build_jira_worklog_payload,
     filtered_state_file,
     find_timecamp_user_id,
     parse_args,
     worklog_payload_fingerprint,
 )
+from src.jira_client import load_jira_user_api_tokens
 from src.jira_export_state import JiraExportState, JiraWorklogMapping
 
 TODAY = date(2026, 8, 10)
@@ -644,6 +647,147 @@ class JiraExporterTest(unittest.TestCase):
 
 
 class JiraExportStateTest(unittest.TestCase):
+    def test_loads_case_insensitive_personal_jira_api_tokens(self):
+        tokens = load_jira_user_api_tokens(
+            '{"Ada@Example.com":" personal-token "}'
+        )
+
+        self.assertEqual(
+            tokens,
+            {"ada@example.com": {"*": "personal-token"}},
+        )
+
+    def test_loads_different_tokens_for_each_jira_instance(self):
+        tokens = load_jira_user_api_tokens(
+            json.dumps(
+                {
+                    "ada@example.com": {
+                        "https://one.atlassian.net/": " token-one ",
+                        "https://TWO.atlassian.net": "token-two",
+                    }
+                }
+            )
+        )
+
+        self.assertEqual(
+            tokens,
+            {
+                "ada@example.com": {
+                    "https://one.atlassian.net": "token-one",
+                    "https://two.atlassian.net": "token-two",
+                }
+            },
+        )
+
+    def test_rejects_invalid_personal_jira_api_token_config(self):
+        with self.assertRaisesRegex(ValueError, "must be a JSON object"):
+            load_jira_user_api_tokens('[{"email":"ada@example.com"}]')
+
+        with self.assertRaisesRegex(ValueError, "empty API token"):
+            load_jira_user_api_tokens('{"ada@example.com":" "}')
+
+    @patch("export_time_entries_jira.JiraClient")
+    def test_filtered_export_uses_matching_personal_jira_token(self, jira_client):
+        instances = [
+            {
+                "instance_id": "org_1",
+                "url": "https://jira.example.com",
+                "email": "root@example.com",
+                "token": "root-token",
+            }
+        ]
+
+        clients = build_jira_clients(
+            instances,
+            user_email="Ada@Example.com",
+            user_api_tokens={"ada@example.com": {"*": "personal-token"}},
+        )
+
+        jira_client.assert_called_once_with(
+            "https://jira.example.com",
+            "Ada@Example.com",
+            "personal-token",
+        )
+        self.assertIs(clients["org_1"], jira_client.return_value)
+
+    @patch("export_time_entries_jira.JiraClient")
+    def test_filtered_export_falls_back_to_root_jira_credentials(self, jira_client):
+        instances = [
+            {
+                "instance_id": "org_1",
+                "url": "https://jira.example.com",
+                "email": "root@example.com",
+                "token": "root-token",
+            }
+        ]
+
+        build_jira_clients(
+            instances,
+            user_email="missing@example.com",
+            user_api_tokens={"ada@example.com": {"*": "personal-token"}},
+        )
+
+        jira_client.assert_called_once_with(
+            "https://jira.example.com",
+            "root@example.com",
+            "root-token",
+        )
+
+    @patch("export_time_entries_jira.JiraClient")
+    def test_filtered_export_selects_token_per_instance(self, jira_client):
+        instances = [
+            {
+                "instance_id": "org_1",
+                "url": "https://one.atlassian.net/",
+                "email": "root-one@example.com",
+                "token": "root-one",
+            },
+            {
+                "instance_id": "org_2",
+                "url": "https://two.atlassian.net",
+                "email": "root-two@example.com",
+                "token": "root-two",
+            },
+            {
+                "instance_id": "org_3",
+                "url": "https://three.atlassian.net",
+                "email": "root-three@example.com",
+                "token": "root-three",
+            },
+        ]
+
+        build_jira_clients(
+            instances,
+            user_email="ada@example.com",
+            user_api_tokens={
+                "ada@example.com": {
+                    "https://one.atlassian.net": "personal-one",
+                    "https://two.atlassian.net": "personal-two",
+                }
+            },
+        )
+
+        self.assertEqual(
+            jira_client.call_args_list,
+            [
+                call(
+                    "https://one.atlassian.net/",
+                    "ada@example.com",
+                    "personal-one",
+                ),
+                call(
+                    "https://two.atlassian.net",
+                    "ada@example.com",
+                    "personal-two",
+                ),
+                call(
+                    "https://three.atlassian.net",
+                    "root-three@example.com",
+                    "root-three",
+                ),
+            ],
+        )
+
     def test_loads_v1_state_and_writes_universal_v2_state(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "state.json"

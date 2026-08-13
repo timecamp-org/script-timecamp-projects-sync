@@ -13,6 +13,9 @@ pip install -r requirements.txt
 ```
 JIRA_INSTANCES='[{"name": "Jira Instance 1", "url": "https://your-domain.atlassian.net", "email": "your-email@example.com", "token": "your-api-token"}, {"name": "Jira Instance 2", "url": "https://another-domain.atlassian.net", "email": "your-email@example.com", "token": "another-api-token"}]'
 
+# Optional: personal Jira API tokens keyed by user email and Jira instance URL
+JIRA_USER_API_TOKENS='{"person@example.com":{"https://your-domain.atlassian.net":"their-first-token","https://another-domain.atlassian.net":"their-second-token"}}'
+
 # Optional: prefix issue names with their Jira key, e.g. "[TCD-123] Task name"
 JIRA_PREFIX_ISSUE_KEY_TO_TASK_NAME=true
 ```
@@ -115,6 +118,26 @@ Restrict a backfill to one TimeCamp user by exact email:
 uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --from 2026-08-09 --to 2026-08-10 --user-email person@example.com --dry-run
 ```
 
+For a filtered export, `JIRA_USER_API_TOKENS` is looked up first by user email
+and then by the Jira base URL from `JIRA_INSTANCES`. Both comparisons are
+case-insensitive, and trailing URL slashes are ignored. This lets one user use a
+different token on each Jira instance. If a URL has no personal token, only that
+instance falls back to its root `email` and `token` from `JIRA_INSTANCES`.
+
+When one personal token works on every instance, the shorter form remains valid:
+
+```bash
+JIRA_USER_API_TOKENS='{"person@example.com":"their-jira-api-token"}'
+```
+
+Runs without `--user-email` use root credentials on every instance. The account
+selected for an instance becomes the author of worklogs created there.
+
+Configure a personal token before that user's first export. Jira worklogs keep
+their original author; switching an existing per-user state from root to a
+personal credential does not transfer ownership and may require Jira's Edit All
+Worklogs or Delete All Worklogs permissions to mutate old root-authored entries.
+
 Unless `--state-file` is supplied, a filtered export uses its own per-user state
 file. Supplying `--from` and `--to` again performs a manual backfill without
 moving an existing incremental cursor. Use `--state-file PATH` or
@@ -131,7 +154,7 @@ moving an existing incremental cursor. Use `--state-file PATH` or
 - Deleting an entry, shortening it below 60 seconds, or moving it to a non-Jira
   task deletes its previously exported Jira worklog.
 - Jira remaining estimates are never adjusted (`adjustEstimate=leave`).
-- The API-token owner remains the worklog author. The comment starts with
+- The selected API-token owner remains the worklog author. The comment starts with
   `TimeCamp user: Display Name <email>` and preserves the TimeCamp note below.
 
 The version-2 state stores its `jira` adapter identifier, incremental cursor,
