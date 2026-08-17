@@ -413,7 +413,107 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         parser,
         default_state_file=DEFAULT_STATE_FILE,
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--all-users",
+        action="store_true",
+        help=(
+            "Export every user configured in JIRA_USER_API_TOKENS. Each user "
+            "uses a separate state file."
+        ),
+    )
+    args = parser.parse_args(argv)
+    if args.all_users and args.user_email:
+        parser.error("--all-users cannot be combined with --user-email")
+    if args.all_users and args.state_file:
+        parser.error("--all-users cannot be combined with --state-file")
+    return args
+
+
+def _run_user_export(
+    args: argparse.Namespace,
+    *,
+    timecamp_client: TimeCampClient,
+    timecamp_users: Optional[List[Mapping[str, Any]]],
+    instances: List[Mapping[str, str]],
+    user_api_tokens: Mapping[str, Mapping[str, str]],
+    backfill_from: Optional[date],
+    backfill_to: Optional[date],
+    user_email: Optional[str],
+) -> SyncResult:
+    filtered_user_ids = None
+    if user_email:
+        filtered_user_ids = [
+            find_timecamp_user_id(timecamp_users or [], user_email)
+        ]
+        print(
+            f"Restricting export to TimeCamp user {user_email} "
+            f"(id {filtered_user_ids[0]})."
+        )
+
+    jira_clients = build_jira_clients(
+        instances,
+        user_email=user_email,
+        user_api_tokens=user_api_tokens,
+    )
+    if user_email:
+        personal_instances = []
+        root_instances = []
+        for instance in instances:
+            destination = (
+                personal_instances
+                if jira_user_api_token_for_instance(
+                    user_api_tokens,
+                    user_email,
+                    instance["url"],
+                )
+                else root_instances
+            )
+            destination.append(instance["name"])
+        if personal_instances:
+            print(
+                f"Using Jira API token for {user_email} on: "
+                f"{', '.join(personal_instances)}."
+            )
+        if root_instances:
+            print(
+                f"No Jira API token configured for {user_email} on: "
+                f"{', '.join(root_instances)}; using the root credentials "
+                "from JIRA_INSTANCES."
+            )
+
+    if args.state_file:
+        state_path = Path(args.state_file)
+    elif user_email:
+        state_path = Path(filtered_state_file(user_email))
+    else:
+        state_path = Path(os.getenv("JIRA_EXPORT_STATE_FILE") or DEFAULT_STATE_FILE)
+    state = JiraExportState.load(state_path)
+    return JiraTimeEntryExporter(
+        timecamp_client,
+        jira_clients,
+        state,
+        dry_run=args.dry_run,
+        user_ids=filtered_user_ids,
+    ).run(backfill_from, backfill_to)
+
+
+def _merge_sync_result(total: SyncResult, result: SyncResult) -> None:
+    for field_name in (
+        "created",
+        "updated",
+        "moved",
+        "deleted",
+        "recovered",
+        "unchanged",
+        "skipped",
+        "failed",
+    ):
+        setattr(
+            total,
+            field_name,
+            getattr(total, field_name) + getattr(result, field_name),
+        )
+    total.errors.extend(result.errors)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -427,64 +527,65 @@ def main(argv: Optional[List[str]] = None) -> int:
             raise ValueError("TIMECAMP_API_TOKEN is not set")
         timecamp_client = TimeCampClient(timecamp_token)
 
-        filtered_user_ids = None
-        if args.user_email:
-            filtered_user_ids = [
-                find_timecamp_user_id(timecamp_client.get_users(), args.user_email)
-            ]
-            print(
-                f"Restricting export to TimeCamp user {args.user_email} "
-                f"(id {filtered_user_ids[0]})."
-            )
-
         instances = load_jira_instances(os.getenv("JIRA_INSTANCES"))
         user_api_tokens = load_jira_user_api_tokens(
             os.getenv("JIRA_USER_API_TOKENS")
         )
-        jira_clients = build_jira_clients(
-            instances,
-            user_email=args.user_email,
-            user_api_tokens=user_api_tokens,
+        timecamp_users = (
+            timecamp_client.get_users()
+            if args.user_email or args.all_users
+            else None
         )
-        if args.user_email:
-            personal_instances = []
-            root_instances = []
-            for instance in instances:
-                destination = (
-                    personal_instances
-                    if jira_user_api_token_for_instance(
-                        user_api_tokens,
-                        args.user_email,
-                        instance["url"],
+
+        if args.all_users:
+            if not user_api_tokens:
+                raise ValueError(
+                    "--all-users requires at least one user in "
+                    "JIRA_USER_API_TOKENS"
+                )
+            total = SyncResult()
+            failed_users = []
+            user_emails = sorted(user_api_tokens)
+            for user_email in user_emails:
+                print(f"\n=== Exporting {user_email} ===")
+                try:
+                    result = _run_user_export(
+                        args,
+                        timecamp_client=timecamp_client,
+                        timecamp_users=timecamp_users,
+                        instances=instances,
+                        user_api_tokens=user_api_tokens,
+                        backfill_from=backfill_from,
+                        backfill_to=backfill_to,
+                        user_email=user_email,
                     )
-                    else root_instances
-                )
-                destination.append(instance["name"])
-            if personal_instances:
-                print(
-                    f"Using Jira API token for {args.user_email} on: "
-                    f"{', '.join(personal_instances)}."
-                )
-            if root_instances:
-                print(
-                    f"No Jira API token configured for {args.user_email} on: "
-                    f"{', '.join(root_instances)}; using the root credentials "
-                    "from JIRA_INSTANCES."
-                )
-        if args.state_file:
-            state_path = Path(args.state_file)
-        elif args.user_email:
-            state_path = Path(filtered_state_file(args.user_email))
-        else:
-            state_path = Path(os.getenv("JIRA_EXPORT_STATE_FILE") or DEFAULT_STATE_FILE)
-        state = JiraExportState.load(state_path)
-        result = JiraTimeEntryExporter(
-            timecamp_client,
-            jira_clients,
-            state,
-            dry_run=args.dry_run,
-            user_ids=filtered_user_ids,
-        ).run(backfill_from, backfill_to)
+                except Exception as exc:
+                    print(f"Error for {user_email}: {exc}")
+                    failed_users.append(user_email)
+                    continue
+                print_sync_summary(result, dry_run=args.dry_run)
+                _merge_sync_result(total, result)
+                if not result.successful:
+                    failed_users.append(user_email)
+
+            print("\n=== Combined all-users result ===")
+            print_sync_summary(total, dry_run=args.dry_run)
+            print(f"- Users succeeded: {len(user_emails) - len(failed_users)}")
+            print(f"- Users failed: {len(failed_users)}")
+            if failed_users:
+                print(f"- Failed users: {', '.join(failed_users)}")
+            return 1 if failed_users else 0
+
+        result = _run_user_export(
+            args,
+            timecamp_client=timecamp_client,
+            timecamp_users=timecamp_users,
+            instances=instances,
+            user_api_tokens=user_api_tokens,
+            backfill_from=backfill_from,
+            backfill_to=backfill_to,
+            user_email=args.user_email,
+        )
     except Exception as exc:
         print(f"Error: {exc}")
         return 1

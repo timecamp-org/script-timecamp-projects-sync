@@ -118,6 +118,19 @@ Restrict a backfill to one TimeCamp user by exact email:
 uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --from 2026-08-09 --to 2026-08-10 --user-email person@example.com --dry-run
 ```
 
+Backfill every user configured in `JIRA_USER_API_TOKENS`, then run all users
+incrementally:
+
+```bash
+uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --all-users --from 2026-08-01 --to 2026-08-10
+uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --all-users
+```
+
+All-users mode runs users sequentially, keeps a separate state file for each
+email, and continues after an individual user fails. The final exit code is
+non-zero if any user fails. `--all-users` cannot be combined with `--user-email`
+or `--state-file`.
+
 For a filtered export, `JIRA_USER_API_TOKENS` is looked up first by user email
 and then by the Jira base URL from `JIRA_INSTANCES`. Both comparisons are
 case-insensitive, and trailing URL slashes are ignored. This lets one user use a
@@ -130,8 +143,9 @@ When one personal token works on every instance, the shorter form remains valid:
 JIRA_USER_API_TOKENS='{"person@example.com":"their-jira-api-token"}'
 ```
 
-Runs without `--user-email` use root credentials on every instance. The account
-selected for an instance becomes the author of worklogs created there.
+Runs with neither `--user-email` nor `--all-users` use root credentials on every
+instance. The account selected for an instance becomes the author of worklogs
+created there.
 
 Configure a personal token before that user's first export. Jira worklogs keep
 their original author; switching an existing per-user state from root to a
@@ -143,6 +157,12 @@ file. Supplying `--from` and `--to` again performs a manual backfill without
 moving an existing incremental cursor. Use `--state-file PATH` or
 `JIRA_EXPORT_STATE_FILE` to override `data/jira_time_entries_state.json`. Use
 `--env-file PATH` to load another dotenv file explicitly.
+
+For cron, after every configured user has completed its initial backfill:
+
+```cron
+*/15 * * * * cd /home/ubuntu/scripts/topo/script-timecamp-projects-sync && uv run --env-file .env --python 3.13 --with-requirements requirements.txt python export_time_entries_jira.py --all-users >> /home/ubuntu/crontab_scripts/logs/topo_jira_export.log 2>&1
+```
 
 ### Mirroring rules
 

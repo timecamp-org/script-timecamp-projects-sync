@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from datetime import date
@@ -13,11 +14,13 @@ from export_time_entries_jira import (
     build_jira_worklog_payload,
     filtered_state_file,
     find_timecamp_user_id,
+    main,
     parse_args,
     worklog_payload_fingerprint,
 )
 from src.jira_client import load_jira_user_api_tokens
 from src.jira_export_state import JiraExportState, JiraWorklogMapping
+from src.time_entry_sync import SyncResult
 
 TODAY = date(2026, 8, 10)
 
@@ -847,6 +850,65 @@ class JiraExportStateTest(unittest.TestCase):
         self.assertEqual(
             filtered_state_file(args.user_email),
             "data/jira_time_entries_state.ezee_jira_phreetech_com.json",
+        )
+
+    def test_cli_accepts_all_users(self):
+        args = parse_args(["--all-users"])
+
+        self.assertTrue(args.all_users)
+
+    def test_cli_rejects_all_users_with_user_email(self):
+        with self.assertRaises(SystemExit):
+            parse_args(
+                ["--all-users", "--user-email", "person@example.com"]
+            )
+
+    def test_cli_rejects_all_users_with_shared_state_file(self):
+        with self.assertRaises(SystemExit):
+            parse_args(["--all-users", "--state-file", "/tmp/shared.json"])
+
+    @patch("export_time_entries_jira.load_dotenv")
+    @patch("export_time_entries_jira.TimeCampClient")
+    @patch("export_time_entries_jira._run_user_export")
+    def test_all_users_continues_after_one_user_fails(
+        self,
+        run_user_export,
+        timecamp_client_class,
+        _load_dotenv,
+    ):
+        run_user_export.side_effect = [
+            RuntimeError("bad credentials"),
+            SyncResult(created=2),
+        ]
+        timecamp_client_class.return_value.get_users.return_value = []
+        env = {
+            "TIMECAMP_API_TOKEN": "timecamp-token",
+            "JIRA_INSTANCES": json.dumps(
+                [
+                    {
+                        "name": "Jira",
+                        "url": "https://jira.example.com",
+                        "email": "root@example.com",
+                        "token": "root-token",
+                    }
+                ]
+            ),
+            "JIRA_USER_API_TOKENS": json.dumps(
+                {
+                    "z@example.com": "z-token",
+                    "a@example.com": "a-token",
+                }
+            ),
+        }
+
+        with patch.dict(os.environ, env, clear=True):
+            exit_code = main(["--all-users"])
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(run_user_export.call_count, 2)
+        self.assertEqual(
+            [item.kwargs["user_email"] for item in run_user_export.call_args_list],
+            ["a@example.com", "z@example.com"],
         )
 
     def test_finds_timecamp_user_by_case_insensitive_exact_email(self):
