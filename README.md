@@ -106,13 +106,19 @@ uv run --env-file .env --with-requirements requirements.txt python export_time_e
 
 # Preview a two-day export for exactly one TimeCamp user
 uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --from 2026-08-09 --to 2026-08-10 --user-email person@example.com --dry-run
+
+# Export every user configured in JIRA_USER_API_TOKENS
+uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --all-users
 ```
 
 Set `JIRA_USER_API_TOKENS` to JSON keyed by user email and Jira base URL, such as
 `{"person@example.com":{"https://one.atlassian.net":"token-one","https://two.atlassian.net":"token-two"}}`,
-to authenticate a filtered `--user-email` export as that Jira user. A string
-value remains shorthand for one token used on every instance. Missing instance
-mappings and unfiltered exports fall back to the root credentials in
+to authenticate a filtered `--user-email` export as that Jira user. `--all-users`
+runs the same filtered export sequentially for every configured email and keeps
+a separate state file for each user. It continues after individual failures and
+returns a non-zero exit code if any user fails. A string value remains shorthand
+for one token used on every instance. Missing instance mappings and exports with
+neither `--user-email` nor `--all-users` fall back to the root credentials in
 `JIRA_INSTANCES`. The selected token owner is the Jira worklog author. The
 exporter records the original TimeCamp user's display name and email in the
 comment. It updates, moves, or deletes Jira worklogs when the source changes and
