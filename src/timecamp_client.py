@@ -355,15 +355,31 @@ class TimeCampClient:
 
     def get_time_entries(
         self,
-        start_date: Any,
-        end_date: Any,
+        start_date: Any = None,
+        end_date: Any = None,
         user_ids: Optional[List[int]] = None,
         opt_fields: Optional[str] = None,
+        modify_from: Any = None,
+        modify_to: Any = None,
     ) -> List[Dict[str, Any]]:
-        params: Dict[str, Any] = {
-            "from": str(start_date),
-            "to": str(end_date),
-        }
+        has_entry_dates = start_date is not None or end_date is not None
+        has_modify_dates = modify_from is not None or modify_to is not None
+        if has_entry_dates and (start_date is None or end_date is None):
+            raise ValueError("Both start_date and end_date must be provided")
+        if has_modify_dates and (modify_from is None or modify_to is None):
+            raise ValueError("Both modify_from and modify_to must be provided")
+        if not has_entry_dates and not has_modify_dates:
+            raise ValueError(
+                "Provide an entry date range or a modification date range"
+            )
+
+        params: Dict[str, Any] = {}
+        if has_entry_dates:
+            params["from"] = str(start_date)
+            params["to"] = str(end_date)
+        if has_modify_dates:
+            params["modify_from"] = str(modify_from)
+            params["modify_to"] = str(modify_to)
         if user_ids:
             params["user_ids"] = ",".join(str(user_id) for user_id in user_ids)
         if opt_fields:
@@ -374,6 +390,57 @@ class TimeCampClient:
             return data
 
         raise ValueError(f"Unexpected TimeCamp entries response: {type(data)}")
+
+    def get_time_entry_deletions(
+        self,
+        modify_from: Any,
+        modify_to: Any,
+        user_ids: Optional[List[int]] = None,
+    ) -> List[Dict[str, Any]]:
+        params: Dict[str, Any] = {
+            "from": str(modify_from),
+            "to": str(modify_to),
+        }
+        if user_ids:
+            params["user_ids"] = ",".join(str(user_id) for user_id in user_ids)
+
+        data = self._request("GET", "entries_deletions", params=params)
+        if isinstance(data, list):
+            return data
+
+        raise ValueError(
+            f"Unexpected TimeCamp entry deletions response: {type(data)}"
+        )
+
+    def get_user_details(
+        self,
+        user_ids: List[int],
+        batch_size: int = 100,
+    ) -> List[Dict[str, Any]]:
+        normalized_ids = list(dict.fromkeys(int(user_id) for user_id in user_ids))
+        if not normalized_ids:
+            return []
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+
+        users: List[Dict[str, Any]] = []
+        for offset in range(0, len(normalized_ids), batch_size):
+            batch = normalized_ids[offset:offset + batch_size]
+            data = self._request(
+                "GET",
+                "user",
+                params={"user_id": ",".join(str(user_id) for user_id in batch)},
+            )
+            if isinstance(data, dict):
+                users.append(data)
+            elif isinstance(data, list):
+                users.extend(data)
+            else:
+                raise ValueError(
+                    f"Unexpected TimeCamp user details response: {type(data)}"
+                )
+
+        return users
 
     def get_entry_tags(self, entry_id: Any) -> Dict[str, List[Dict[str, Any]]]:
         data = self._request("GET", f"entries/{entry_id}/tags")

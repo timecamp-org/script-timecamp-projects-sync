@@ -13,6 +13,9 @@ pip install -r requirements.txt
 ```
 JIRA_INSTANCES='[{"name": "Jira Instance 1", "url": "https://your-domain.atlassian.net", "email": "your-email@example.com", "token": "your-api-token"}, {"name": "Jira Instance 2", "url": "https://another-domain.atlassian.net", "email": "your-email@example.com", "token": "another-api-token"}]'
 
+# Optional: personal Jira API tokens keyed by user email and Jira instance URL
+JIRA_USER_API_TOKENS='{"person@example.com":{"https://your-domain.atlassian.net":"their-first-token","https://another-domain.atlassian.net":"their-second-token"}}'
+
 # Optional: prefix issue names with their Jira key, e.g. "[TCD-123] Task name"
 JIRA_PREFIX_ISSUE_KEY_TO_TASK_NAME=true
 ```
@@ -81,6 +84,101 @@ part of the existing bulk issue search, so it does not add per-issue API calls.
    are synchronized to TimeCamp task hour budgets through the v3 billing-settings
    endpoint. Tasks without a Jira estimate are left unchanged. Existing TimeCamp
    names are updated only when they differ from the fetched Jira names.
+
+## Export TimeCamp entries to Jira worklogs
+
+The exporter mirrors time from TimeCamp tasks created by `fetch_jira.py` back to
+the corresponding issue and Jira instance. It writes by default and runs on the
+destination-neutral lifecycle documented in
+[`time-entry-sync.md`](time-entry-sync.md).
+
+The first run must specify the TimeCamp entry-date range to backfill:
+
+```bash
+uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --from 2026-08-01 --to 2026-08-10
+```
+
+After the first successful run, omit the dates. The exporter uses TimeCamp's
+entry modification filter and deletion feed, so an entry from months ago is
+still updated or deleted when somebody changes it today:
+
+```bash
+uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py
+```
+
+Preview without changing Jira or the state file:
+
+```bash
+uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --dry-run
+```
+
+Restrict a backfill to one TimeCamp user by exact email:
+
+```bash
+uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --from 2026-08-09 --to 2026-08-10 --user-email person@example.com --dry-run
+```
+
+For a filtered export, `JIRA_USER_API_TOKENS` is looked up first by user email
+and then by the Jira base URL from `JIRA_INSTANCES`. Both comparisons are
+case-insensitive, and trailing URL slashes are ignored. This lets one user use a
+different token on each Jira instance. If a URL has no personal token, only that
+instance falls back to its root `email` and `token` from `JIRA_INSTANCES`.
+
+When one personal token works on every instance, the shorter form remains valid:
+
+```bash
+JIRA_USER_API_TOKENS='{"person@example.com":"their-jira-api-token"}'
+```
+
+Runs without `--user-email` use root credentials on every instance. The account
+selected for an instance becomes the author of worklogs created there.
+
+Configure a personal token before that user's first export. Jira worklogs keep
+their original author; switching an existing per-user state from root to a
+personal credential does not transfer ownership and may require Jira's Edit All
+Worklogs or Delete All Worklogs permissions to mutate old root-authored entries.
+
+Unless `--state-file` is supplied, a filtered export uses its own per-user state
+file. Supplying `--from` and `--to` again performs a manual backfill without
+moving an existing incremental cursor. Use `--state-file PATH` or
+`JIRA_EXPORT_STATE_FILE` to override `data/jira_time_entries_state.json`. Use
+`--env-file PATH` to load another dotenv file explicitly.
+
+### Mirroring rules
+
+- A new TimeCamp entry creates a Jira worklog. Entries shorter than 60 seconds
+  are not created.
+- Changes to duration, start time, date, or note update the existing worklog.
+- Moving an entry to another Jira issue or configured instance deletes the old
+  worklog and creates it on the new issue.
+- Deleting an entry, shortening it below 60 seconds, or moving it to a non-Jira
+  task deletes its previously exported Jira worklog.
+- Jira remaining estimates are never adjusted (`adjustEstimate=leave`).
+- The selected API-token owner remains the worklog author. The comment starts with
+  `TimeCamp user: Display Name <email>` and preserves the TimeCamp note below.
+
+The version-2 state stores its `jira` adapter identifier, incremental cursor,
+and TimeCamp-entry-to-Jira-worklog mappings. Existing version-1 Jira state is
+migrated on the next live save. Keep it on persistent storage. Each worklog also
+receives a hidden `timecamp.entry` property, allowing the next run to recover a
+create that reached Jira before its local mapping was saved.
+
+The cursor advances only when every entry succeeds. Mappings are saved after
+each successful remote mutation, so retrying the inclusive modification window
+is safe. Manual date-range backfills verify the remote worklog and detect manual
+Jira edits or deletions. Any per-entry failure produces a non-zero exit code.
+
+### Required permissions
+
+For every configured instance, the Jira API-token user needs:
+
+- Browse Projects
+- Work on Issues
+- Edit Own Worklogs
+- Delete Own Worklogs
+
+The TimeCamp token must read the intended users, user details, tasks, entries,
+and deleted-entry data. Missing user identity or timezone data is an error.
 
 ## Someday
 

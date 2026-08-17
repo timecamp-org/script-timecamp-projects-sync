@@ -3,10 +3,16 @@ import unittest
 from unittest.mock import patch
 
 from fetch_jira import JiraClient, JiraFetcher
+from src.jira_client import (
+    build_jira_issue_external_id,
+    generate_jira_org_id,
+    parse_jira_issue_external_id,
+)
 
 
 class FakeResponse:
     status_code = 200
+    content = b"{}"
 
     def __init__(self, data=None):
         self.data = data or {"issues": [], "isLast": True}
@@ -25,6 +31,25 @@ class FakeSession:
 
     def get(self, url, params=None, timeout=None):
         self.calls.append({"url": url, "params": params, "timeout": timeout})
+        return self.response
+
+    def request(
+        self,
+        method,
+        url,
+        params=None,
+        json=None,
+        timeout=None,
+    ):
+        self.calls.append(
+            {
+                "method": method,
+                "url": url,
+                "params": params,
+                "json": json,
+                "timeout": timeout,
+            }
+        )
         return self.response
 
 
@@ -48,7 +73,9 @@ class JiraClientTest(unittest.TestCase):
         client = object.__new__(JiraClient)
         client.server = "https://example.atlassian.net"
         client.session = FakeSession()
-        client.session.get = lambda url, params=None, timeout=None: UnauthorizedResponse()
+        client.session.get = (
+            lambda url, params=None, timeout=None: UnauthorizedResponse()
+        )
 
         with self.assertRaisesRegex(RuntimeError, "Jira authentication failed"):
             client._validate_authentication()
@@ -74,7 +101,8 @@ class JiraClientTest(unittest.TestCase):
 
         self.assertEqual(
             client.session.calls[0]["params"]["jql"],
-            'project = "CF" AND status NOT IN ("Done", "Closed", "Resolved", "Completed")',
+            'project = "CF" AND status NOT IN '
+            '("Done", "Closed", "Resolved", "Completed")',
         )
 
     def test_get_issues_includes_original_estimate_without_extra_api_calls(self):
@@ -103,6 +131,108 @@ class JiraClientTest(unittest.TestCase):
         self.assertIn("timetracking", requested_fields)
         self.assertEqual(issues[0]["original_estimate"], "2h")
         self.assertEqual(issues[0]["original_estimate_seconds"], 7200)
+
+    def test_worklog_methods_use_v3_and_leave_estimate_unchanged(self):
+        response = FakeResponse({"id": "9001"})
+        client = object.__new__(JiraClient)
+        client.server = "https://example.atlassian.net"
+        client.session = FakeSession(response)
+
+        created = client.create_worklog(
+            "TCD-123",
+            {"timeSpentSeconds": 3600},
+        )
+        client.update_worklog(
+            "TCD-123",
+            "9001",
+            {"timeSpentSeconds": 1800},
+        )
+        client.delete_worklog("TCD-123", "9001")
+
+        self.assertEqual(created, {"id": "9001"})
+        self.assertEqual(
+            [call["method"] for call in client.session.calls],
+            ["POST", "PUT", "DELETE"],
+        )
+        self.assertEqual(
+            client.session.calls[0]["url"],
+            "https://example.atlassian.net/rest/api/3/issue/TCD-123/worklog",
+        )
+        self.assertEqual(
+            client.session.calls[1]["url"],
+            "https://example.atlassian.net/rest/api/3/issue/TCD-123/worklog/9001",
+        )
+        self.assertEqual(
+            client.session.calls[2]["params"],
+            {"adjustEstimate": "leave"},
+        )
+
+    def test_rejects_duplicate_timecamp_worklog_properties(self):
+        response = FakeResponse(
+            {
+                "worklogs": [
+                    {
+                        "id": "9001",
+                        "properties": [
+                            {
+                                "key": "timecamp.entry",
+                                "value": {"entryId": "101"},
+                            }
+                        ],
+                    },
+                    {
+                        "id": "9002",
+                        "properties": [
+                            {
+                                "key": "timecamp.entry",
+                                "value": {"entryId": "101"},
+                            }
+                        ],
+                    },
+                ],
+                "total": 2,
+            }
+        )
+        client = object.__new__(JiraClient)
+        client.server = "https://example.atlassian.net"
+        client.session = FakeSession(response)
+
+        with self.assertRaisesRegex(ValueError, "multiple worklogs"):
+            client.get_timecamp_worklog_map("TCD-123")
+
+
+class JiraExternalIdTest(unittest.TestCase):
+    def test_round_trips_issue_id_with_underscored_project_key(self):
+        instance_id = generate_jira_org_id("https://example.atlassian.net")
+        external_id = build_jira_issue_external_id(
+            instance_id,
+            "TCD_CORE",
+            "TCD_CORE-123",
+        )
+
+        target = parse_jira_issue_external_id(external_id, [instance_id])
+
+        self.assertIsNotNone(target)
+        self.assertEqual(target.instance_id, instance_id)
+        self.assertEqual(target.issue_key, "TCD_CORE-123")
+
+    def test_rejects_project_issue_key_mismatch(self):
+        self.assertIsNone(
+            parse_jira_issue_external_id(
+                "org_1_proj_TCD_OTHER-123",
+                ["org_1"],
+            )
+        )
+
+    def test_parses_sync_prefix_added_by_timecamp_project_sync(self):
+        target = parse_jira_issue_external_id(
+            "sync_org_1_proj_TCD_TCD-123",
+            ["org_1"],
+        )
+
+        self.assertIsNotNone(target)
+        self.assertEqual(target.instance_id, "org_1")
+        self.assertEqual(target.issue_key, "TCD-123")
 
 
 class JiraFetcherTest(unittest.TestCase):

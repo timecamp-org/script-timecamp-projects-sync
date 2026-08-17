@@ -3,244 +3,18 @@ import json
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
-from jira import JIRA
-import requests
-import hashlib
+
+from src.jira_client import (
+    JiraClient as SharedJiraClient,
+    build_jira_issue_external_id,
+    build_jira_project_external_id,
+    generate_jira_org_id,
+)
 
 # Load environment variables
 load_dotenv(override=True)
 
-class JiraClient:
-    """Client for interacting with Jira API"""
-    
-    def __init__(self, server: str, email: str, api_token: str):
-        """
-        Initialize the Jira client
-        
-        Args:
-            server: The Jira server URL (e.g., https://your-domain.atlassian.net)
-            email: Email address for authentication
-            api_token: API token for authentication
-        """
-        self.server = server.rstrip('/')
-        self.session = requests.Session()
-        self.session.auth = (email, api_token)
-        self.session.headers.update({
-            'Accept': 'application/json'
-        })
-        self._validate_authentication()
-        self.jira = JIRA(
-            server=self.server,
-            basic_auth=(email, api_token)
-        )
-
-    def _validate_authentication(self) -> None:
-        """Fail before fetching data when Jira rejects the configured credentials."""
-        try:
-            response = self.session.get(
-                f'{self.server}/rest/api/3/myself',
-                timeout=30,
-            )
-        except requests.RequestException as e:
-            raise RuntimeError(
-                f"Could not validate Jira authentication for {self.server}: {e}"
-            ) from e
-
-        if response.status_code in (401, 403):
-            raise RuntimeError(
-                f"Jira authentication failed for {self.server} "
-                f"(HTTP {response.status_code}). Check the configured email and API token."
-            )
-
-        try:
-            response.raise_for_status()
-        except requests.RequestException as e:
-            raise RuntimeError(
-                f"Could not validate Jira authentication for {self.server}: {e}"
-            ) from e
-        
-    def get_projects(self) -> List[Dict[str, Any]]:
-        """Get all projects from the Jira instance"""
-        try:
-            projects = self.jira.projects()
-            return [self._serialize_project(project) for project in projects]
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to fetch Jira projects from {self.server}: {e}"
-            ) from e
-    
-    def get_issues_for_project(self, project_key: str) -> List[Dict[str, Any]]:
-        """
-        Get all active issues for a specific project (excludes Done, Closed, Resolved, Completed)
-        
-        Args:
-            project_key: The project key (e.g., 'TCD')
-            
-        Returns:
-            List of issues with their details
-        """
-        all_issues = []
-        max_results = 100
-        next_page_token = None
-        fields = [
-            'issuetype',
-            'summary',
-            'status',
-            'priority',
-            'assignee',
-            'reporter',
-            'created',
-            'updated',
-            'project',
-            'parent',
-            'subtasks',
-            'customfield_10014',
-            'timetracking',
-        ]
-
-        # Jira Cloud removed the old /rest/api/2/search endpoint used by jira.search_issues().
-        # The replacement endpoint uses cursor pagination with nextPageToken.
-        excluded_statuses = ["Done", "Closed", "Resolved", "Completed"]
-        excluded_statuses_jql = ", ".join(
-            self._quote_jql_value(status) for status in excluded_statuses
-        )
-        jql = (
-            f"project = {self._quote_jql_value(project_key)} "
-            f"AND status NOT IN ({excluded_statuses_jql})"
-        )
-
-        while True:
-            params = {
-                'jql': jql,
-                'maxResults': max_results,
-                'fields': ','.join(fields),
-                'expand': 'names',
-            }
-            if next_page_token:
-                params['nextPageToken'] = next_page_token
-
-            response = self.session.get(
-                f'{self.server}/rest/api/3/search/jql',
-                params=params,
-                timeout=60,
-            )
-            response.raise_for_status()
-            data = response.json()
-            issues = data.get('issues', [])
-
-            all_issues.extend([self._serialize_issue_json(issue) for issue in issues])
-
-            next_page_token = data.get('nextPageToken')
-            if data.get('isLast', True) or not next_page_token:
-                break
-
-        return all_issues
-    
-    def _serialize_project(self, project) -> Dict[str, Any]:
-        """Convert Jira Project object to dictionary"""
-        return {
-            'id': project.id,
-            'key': project.key,
-            'name': project.name,
-            'description': getattr(project, 'description', ''),
-            'lead': getattr(project, 'lead', None),
-            'project_type_key': getattr(project, 'projectTypeKey', '')
-        }
-    
-    def _serialize_issue(self, issue) -> Dict[str, Any]:
-        """Convert Jira Issue object to dictionary"""
-        fields = issue.fields
-        timetracking = getattr(fields, 'timetracking', None)
-        
-        serialized = {
-            'id': issue.id,
-            'key': issue.key,
-            'issue_type': fields.issuetype.name if hasattr(fields, 'issuetype') else '',
-            'summary': fields.summary if hasattr(fields, 'summary') else '',
-            'status': fields.status.name if hasattr(fields, 'status') else '',
-            'priority': fields.priority.name if hasattr(fields, 'priority') and fields.priority else None,
-            'assignee': fields.assignee.displayName if hasattr(fields, 'assignee') and fields.assignee else None,
-            'reporter': fields.reporter.displayName if hasattr(fields, 'reporter') and fields.reporter else None,
-            'created': str(fields.created) if hasattr(fields, 'created') else None,
-            'updated': str(fields.updated) if hasattr(fields, 'updated') else None,
-            'project_key': fields.project.key if hasattr(fields, 'project') else '',
-            'parent': None,
-            'subtasks': [],
-            'original_estimate': (
-                getattr(timetracking, 'originalEstimate', None)
-                if timetracking else None
-            ),
-            'original_estimate_seconds': (
-                getattr(timetracking, 'originalEstimateSeconds', None)
-                if timetracking else None
-            ),
-        }
-        
-        # Get parent issue if exists
-        if hasattr(fields, 'parent') and fields.parent:
-            serialized['parent'] = fields.parent.key
-        
-        # Get subtasks
-        if hasattr(fields, 'subtasks') and fields.subtasks:
-            serialized['subtasks'] = [subtask.key for subtask in fields.subtasks]
-        
-        # For Epic relationship (if using Jira Cloud/Server with Epic Link)
-        if hasattr(fields, 'customfield_10014') and fields.customfield_10014:
-            # Epic Link (common custom field for epic relationship)
-            serialized['epic_link'] = str(fields.customfield_10014)
-        
-        return serialized
-
-    def _serialize_issue_json(self, issue: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert Jira REST issue JSON to dictionary."""
-        fields = issue.get('fields') or {}
-        parent = fields.get('parent') or {}
-        subtasks = fields.get('subtasks') or []
-        epic_link = fields.get('customfield_10014')
-        timetracking = fields.get('timetracking') or {}
-
-        serialized = {
-            'id': issue.get('id'),
-            'key': issue.get('key'),
-            'issue_type': self._name(fields.get('issuetype')),
-            'summary': fields.get('summary') or '',
-            'status': self._name(fields.get('status')),
-            'priority': self._name(fields.get('priority')),
-            'assignee': self._display_name(fields.get('assignee')),
-            'reporter': self._display_name(fields.get('reporter')),
-            'created': fields.get('created'),
-            'updated': fields.get('updated'),
-            'project_key': (fields.get('project') or {}).get('key', ''),
-            'parent': parent.get('key') if parent else None,
-            'subtasks': [subtask.get('key') for subtask in subtasks if subtask.get('key')],
-            'original_estimate': timetracking.get('originalEstimate'),
-            'original_estimate_seconds': timetracking.get('originalEstimateSeconds'),
-        }
-
-        if epic_link:
-            if isinstance(epic_link, dict):
-                serialized['epic_link'] = epic_link.get('key') or epic_link.get('id') or str(epic_link)
-            else:
-                serialized['epic_link'] = str(epic_link)
-
-        return serialized
-
-    @staticmethod
-    def _name(value: Optional[Dict[str, Any]]) -> Optional[str]:
-        if not value:
-            return None
-        return value.get('name')
-
-    @staticmethod
-    def _display_name(value: Optional[Dict[str, Any]]) -> Optional[str]:
-        if not value:
-            return None
-        return value.get('displayName')
-
-    @staticmethod
-    def _quote_jql_value(value: str) -> str:
-        escaped = value.replace('\\', '\\\\').replace('"', '\\"')
-        return f'"{escaped}"'
+JiraClient = SharedJiraClient
 
 class JiraFetcher:
     """Main class for fetching data from multiple Jira instances"""
@@ -280,9 +54,7 @@ class JiraFetcher:
     
     def _generate_org_id(self, url: str) -> str:
         """Generate a consistent org ID from URL"""
-        # Use hash to generate consistent numeric ID
-        hash_value = int(hashlib.md5(url.encode()).hexdigest()[:6], 16)
-        return f"org_{hash_value % 1000000}"
+        return generate_jira_org_id(url)
 
     def _format_issue_name(self, issue: Dict[str, Any]) -> str:
         """Format an issue name according to the Jira task naming setting."""
@@ -328,7 +100,10 @@ class JiraFetcher:
                     print(f"  Processing project: {project['name']} ({project['key']})")
                     
                     # Create project task_id with org prefix
-                    project_task_id = f"{org_id}_proj_{project['key']}"
+                    project_task_id = build_jira_project_external_id(
+                        org_id,
+                        project['key'],
+                    )
                     
                     # Add project as child of organization
                     flattened_data.append({
@@ -345,7 +120,11 @@ class JiraFetcher:
                     active_issue_keys = {issue['key'] for issue in issues}
                     issue_key_to_task_id = {}
                     for issue in issues:
-                        issue_task_id = f"{org_id}_proj_{project['key']}_{issue['key']}"
+                        issue_task_id = build_jira_issue_external_id(
+                            org_id,
+                            project['key'],
+                            issue['key'],
+                        )
                         issue_key_to_task_id[issue['key']] = issue_task_id
                     
                     # Add issues to flattened structure
@@ -446,7 +225,7 @@ def main():
     projects = len([item for item in data if is_project_item(item)])
     issues = total_items - organizations - projects
     
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  Total items: {total_items}")
     print(f"  Organizations: {organizations}")
     print(f"  Projects: {projects}")
@@ -454,7 +233,7 @@ def main():
     
     # Show structure preview
     if data:
-        print(f"\nStructure preview:")
+        print("\nStructure preview:")
         for i, item in enumerate(data[:15]):
             # Determine indentation based on hierarchy level
             if item['parent_id'] == 0:

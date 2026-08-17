@@ -223,6 +223,100 @@ class TimeCampClientTest(unittest.TestCase):
             ],
         )
 
+    def test_get_time_entries_supports_modification_dates_without_entry_dates(self):
+        calls = []
+
+        class FakeClient(TimeCampClient):
+            def __init__(self):
+                pass
+
+            def _request(self, method, endpoint, json=None, params=None):
+                calls.append((method, endpoint, params))
+                return [{"id": 123}]
+
+        response = FakeClient().get_time_entries(
+            modify_from="2026-08-01",
+            modify_to="2026-08-10",
+        )
+
+        self.assertEqual(response, [{"id": 123}])
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "GET",
+                    "entries",
+                    {
+                        "modify_from": "2026-08-01",
+                        "modify_to": "2026-08-10",
+                    },
+                )
+            ],
+        )
+
+    def test_get_time_entry_deletions_uses_modification_window(self):
+        calls = []
+
+        class FakeClient(TimeCampClient):
+            def __init__(self):
+                pass
+
+            def _request(self, method, endpoint, json=None, params=None):
+                calls.append((method, endpoint, params))
+                return [{"entry_id": 123}]
+
+        response = FakeClient().get_time_entry_deletions(
+            "2026-08-01",
+            "2026-08-10",
+            user_ids=[1, 2],
+        )
+
+        self.assertEqual(response, [{"entry_id": 123}])
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "GET",
+                    "entries_deletions",
+                    {
+                        "from": "2026-08-01",
+                        "to": "2026-08-10",
+                        "user_ids": "1,2",
+                    },
+                )
+            ],
+        )
+
+    def test_get_user_details_batches_and_normalizes_single_user_response(self):
+        calls = []
+
+        class FakeClient(TimeCampClient):
+            def __init__(self):
+                pass
+
+            def _request(self, method, endpoint, json=None, params=None):
+                calls.append(params["user_id"])
+                if params["user_id"] == "1,2":
+                    return [{"user_id": 1}, {"user_id": 2}]
+                return {"user_id": 3}
+
+        response = FakeClient().get_user_details([1, 2, 3, 1], batch_size=2)
+
+        self.assertEqual(calls, ["1,2", "3"])
+        self.assertEqual(
+            response,
+            [{"user_id": 1}, {"user_id": 2}, {"user_id": 3}],
+        )
+
+    def test_get_time_entries_requires_complete_date_pairs(self):
+        client = object.__new__(TimeCampClient)
+
+        with self.assertRaisesRegex(ValueError, "Both start_date and end_date"):
+            client.get_time_entries(start_date="2026-08-01")
+
+        with self.assertRaisesRegex(ValueError, "Both modify_from and modify_to"):
+            client.get_time_entries(modify_from="2026-08-01")
+
     def test_get_internal_projects_posts_parent_status_and_include(self):
         calls = []
 

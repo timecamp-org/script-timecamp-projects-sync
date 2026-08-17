@@ -21,4 +21,4 @@ env/
 tasks.json
 task*.json
 projects.json
-
+data/*_time_entries_state*.json
