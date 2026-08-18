@@ -194,12 +194,23 @@ class MondayClient:
         )
         return data.get("change_simple_column_value") or {}
 
-    def get_boards(self, board_ids: Iterable[str]) -> List[Dict[str, Any]]:
+    def get_boards(
+        self,
+        board_ids: Iterable[str],
+        skip_subscribers_for_board_ids: Optional[Iterable[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """Get boards with groups, columns, and all items."""
         all_boards: List[Dict[str, Any]] = []
+        skip_subscribers = {
+            str(board_id)
+            for board_id in (skip_subscribers_for_board_ids or [])
+        }
 
         for board_id in board_ids:
-            board = self._get_board(board_id)
+            board = self._get_board(
+                board_id,
+                include_subscribers=str(board_id) not in skip_subscribers,
+            )
             if not board:
                 continue
 
@@ -220,50 +231,57 @@ class MondayClient:
 
         return all_boards
 
-    def _get_board(self, board_id: str) -> Optional[Dict[str, Any]]:
-        query = """
-        query ($boardIds: [ID!], $limit: Int!) {
-          boards(ids: $boardIds) {
+    def _get_board(
+        self,
+        board_id: str,
+        include_subscribers: bool = True,
+    ) -> Optional[Dict[str, Any]]:
+        subscribers_fields = """
+            subscribers {
+              email
+            }
+        """ if include_subscribers else ""
+        query = f"""
+        query ($boardIds: [ID!], $limit: Int!) {{
+          boards(ids: $boardIds) {{
             id
             name
             state
             type
-            subscribers {
-              email
-            }
-            items_page(limit: $limit) {
+            {subscribers_fields}
+            items_page(limit: $limit) {{
               cursor
-              items {
+              items {{
                 id
                 name
                 state
-                column_values {
+                column_values {{
                   id
                   text
                   value
                   type
-                }
-                parent_item {
+                }}
+                parent_item {{
                   id
-                }
-                group {
+                }}
+                group {{
                   id
-                }
-              }
-            }
-            columns {
+                }}
+              }}
+            }}
+            columns {{
               id
               title
               type
               settings_str
-            }
-            groups {
+            }}
+            groups {{
               id
               title
               archived
-            }
-          }
-        }
+            }}
+          }}
+        }}
         """
         data = self._request(
             query,
@@ -313,6 +331,7 @@ class MondayFetcher:
         include_done: bool = False,
         include_archived_groups: bool = False,
         mandatory_tag_columns: Optional[List[str]] = None,
+        ignored_user_assigned_board_ids: Optional[Iterable[str]] = None,
     ):
         api_token = os.getenv("MONDAY_API_TOKEN")
         if not api_token:
@@ -323,6 +342,12 @@ class MondayFetcher:
         self.include_done = include_done
         self.include_archived_groups = include_archived_groups
         self.mandatory_tag_columns = mandatory_tag_columns or load_mandatory_tag_columns_from_env()
+        self.ignored_user_assigned_board_ids = normalize_board_ids(
+            ignored_user_assigned_board_ids
+            if ignored_user_assigned_board_ids is not None
+            else load_ignored_user_assigned_board_ids_from_env()
+        )
+        self._assignment_ignored_board_ids = set(self.ignored_user_assigned_board_ids)
         self.boards_done_statuses: Dict[str, Set[int]] = {}
         self.users_by_id: Dict[str, Dict[str, str]] = {}
 
@@ -338,12 +363,24 @@ class MondayFetcher:
             print(f"  Found {len(self.board_ids)} non-subitem board(s)")
 
         print("Fetching selected Monday boards...")
-        boards = self.client.get_boards(self.board_ids)
+        boards = self.client.get_boards(
+            self.board_ids,
+            skip_subscribers_for_board_ids=self.ignored_user_assigned_board_ids,
+        )
         print(f"  Fetched {len(boards)} board(s)")
         self._fetch_users()
 
         flattened_data: List[Dict[str, Any]] = []
         subitem_board_ids = self._collect_subitem_board_ids(boards)
+        self._assignment_ignored_board_ids = expand_ignored_user_assigned_board_ids(
+            self.ignored_user_assigned_board_ids,
+            boards,
+        )
+        if self.ignored_user_assigned_board_ids:
+            print(
+                "  Skipping user assignments for "
+                f"{len(self.ignored_user_assigned_board_ids)} configured board(s)"
+            )
         self._fetch_boards_done_statuses(boards)
 
         for board in boards:
@@ -365,7 +402,10 @@ class MondayFetcher:
 
         if subitem_board_ids:
             print(f"Fetching {len(subitem_board_ids)} subitem board(s)...")
-            subitem_boards = self.client.get_boards(sorted(subitem_board_ids))
+            subitem_boards = self.client.get_boards(
+                sorted(subitem_board_ids),
+                skip_subscribers_for_board_ids=self._assignment_ignored_board_ids,
+            )
             self._fetch_boards_done_statuses(subitem_boards)
 
             for board in subitem_boards:
@@ -414,9 +454,10 @@ class MondayFetcher:
             if mandatory_tags:
                 task[MONDAY_MANDATORY_TAGS_OUTPUT_KEY] = mandatory_tags
 
-            assigned_users = self._get_assigned_users(item)
-            if assigned_users:
-                task[MONDAY_ASSIGNED_USERS_OUTPUT_KEY] = assigned_users
+            if self._should_export_assigned_users(board):
+                assigned_users = self._get_assigned_users(item)
+                if assigned_users:
+                    task[MONDAY_ASSIGNED_USERS_OUTPUT_KEY] = assigned_users
 
             yield task
 
@@ -513,6 +554,9 @@ class MondayFetcher:
                 tags[output_name] = values
 
         return tags
+
+    def _should_export_assigned_users(self, board: Dict[str, Any]) -> bool:
+        return str(board.get("id")) not in self._assignment_ignored_board_ids
 
     def _get_assigned_users(self, item: Dict[str, Any]) -> Dict[str, Dict[str, str]]:
         assigned_users: Dict[str, Dict[str, str]] = {}
@@ -614,6 +658,18 @@ def extract_people_user_ids(raw_value: Optional[str]) -> List[str]:
     return users
 
 
+def normalize_board_ids(board_ids: Optional[Iterable[str]]) -> Set[str]:
+    return {
+        str(board_id).strip()
+        for board_id in (board_ids or [])
+        if str(board_id).strip()
+    }
+
+
+def parse_board_ids(raw_value: Optional[str]) -> Set[str]:
+    return normalize_board_ids((raw_value or "").split(","))
+
+
 def load_board_ids_from_env() -> List[str]:
     board_ids = os.getenv("MONDAY_BOARD_IDS", "")
     return [
@@ -621,6 +677,32 @@ def load_board_ids_from_env() -> List[str]:
         for board_id in board_ids.split(",")
         if board_id.strip()
     ]
+
+
+def load_ignored_user_assigned_board_ids_from_env() -> Set[str]:
+    return parse_board_ids(os.getenv("MONDAY_IGNORED_USER_ASSIGNED_BOARD_IDS", ""))
+
+
+def expand_ignored_user_assigned_board_ids(
+    ignored_board_ids: Iterable[str],
+    boards: List[Dict[str, Any]],
+) -> Set[str]:
+    """Include subitem boards that belong to ignored parent boards."""
+    ignored = normalize_board_ids(ignored_board_ids)
+
+    for board in boards:
+        if str(board.get("id")) not in ignored:
+            continue
+
+        settings = get_settings(
+            board.get("columns", []),
+            MONDAY_FIELD_TYPE_SUBTASKS,
+            "settings_str",
+        )
+        for board_id in settings.get("boardIds", []):
+            ignored.add(str(board_id))
+
+    return ignored
 
 
 def load_mandatory_tag_columns_from_env() -> List[str]:
