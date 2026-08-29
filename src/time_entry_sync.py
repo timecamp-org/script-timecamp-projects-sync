@@ -110,6 +110,7 @@ class SyncResult:
 
 class SyncState(Protocol):
     cursor_date: Optional[str]
+    initial_backfill_from: Optional[str]
 
     def get(self, entry_id: Any) -> Optional[SyncMapping]: ...
 
@@ -278,8 +279,17 @@ class TimeEntrySyncEngine:
                 self._record_failure(entry_id, exc)
 
         if self.result.successful and not self.dry_run:
+            state_changed = False
             if backfill_from is None or previous_cursor is None:
                 self.state.cursor_date = self.today.isoformat()
+                state_changed = True
+            if (
+                self.state.cursor_date is not None
+                and self.state.initial_backfill_from is not None
+            ):
+                self.state.initial_backfill_from = None
+                state_changed = True
+            if state_changed:
                 self._save_state()
         elif self.result.failed:
             print("Cursor was not advanced because at least one entry failed.")

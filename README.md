@@ -95,11 +95,12 @@ python3 sync_projects.py
 python3 fetch_jira.py
 python3 sync_projects.py
 
-# First TimeCamp → Jira worklog backfill (writes by default)
-uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --from 2026-08-01 --to 2026-08-10
-
-# Later runs export entries changed or deleted since the last successful run
+# The first run backfills today plus the previous 30 calendar days;
+# later runs export entries changed or deleted since the saved cursor
 uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py
+
+# Use explicit dates when older history must also be exported
+uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --from 2026-08-01 --to 2026-08-10
 
 # Preview without changing Jira or exporter state
 uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --dry-run
@@ -116,13 +117,15 @@ Set `JIRA_USER_API_TOKENS` to JSON keyed by user email and Jira base URL, such a
 to authenticate a filtered `--user-email` export as that Jira user. `--all-users`
 runs the same filtered export sequentially for every configured email and keeps
 a separate state file for each user. It continues after individual failures and
-returns a non-zero exit code if any user fails. A string value remains shorthand
-for one token used on every instance. Missing instance mappings and exports with
-neither `--user-email` nor `--all-users` fall back to the root credentials in
-`JIRA_INSTANCES`. The selected token owner is the Jira worklog author. The
-exporter records the original TimeCamp user's display name and email in the
-comment. It updates, moves, or deletes Jira worklogs when the source changes and
-skips Jira writes when the canonical payload is unchanged. See
+returns a non-zero exit code if any user fails. A newly configured user with no
+state is automatically backfilled for 31 calendar dates on the next undated
+run. A string value remains shorthand for one token used on every instance.
+Missing instance mappings and exports with neither `--user-email` nor
+`--all-users` fall back to the root credentials in `JIRA_INSTANCES`. The
+selected token owner is the Jira worklog author. The exporter records the
+original TimeCamp user's display name and email in the comment. It updates,
+moves, or deletes Jira worklogs when the source changes and skips Jira writes
+when the canonical payload is unchanged. See
 [`docs/jira.md`](docs/jira.md) and
 [`docs/time-entry-sync.md`](docs/time-entry-sync.md) for state, recovery,
 permissions, and the reusable adapter contract.

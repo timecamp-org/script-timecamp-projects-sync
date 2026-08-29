@@ -2,7 +2,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import call, patch
 
@@ -241,12 +241,13 @@ class JiraExporterTest(unittest.TestCase):
         self.addCleanup(self.temp_dir.cleanup)
         self.state_path = Path(self.temp_dir.name) / "jira-state.json"
 
-    def new_state(self, cursor=None, mappings=None):
+    def new_state(self, cursor=None, mappings=None, initial_backfill_from=None):
         state = JiraExportState.load(self.state_path)
         state.cursor_date = cursor
+        state.initial_backfill_from = initial_backfill_from
         for entry_id, mapping in (mappings or {}).items():
             state.set(entry_id, mapping)
-        if cursor is not None or mappings:
+        if cursor is not None or mappings or initial_backfill_from is not None:
             state.save()
         return state
 
@@ -272,6 +273,107 @@ class JiraExporterTest(unittest.TestCase):
         self.assertEqual(persisted.cursor_date, "2026-08-10")
         self.assertEqual(persisted.get("101").issue_key, "TCD-123")
         self.assertIsNotNone(persisted.get("101").source_fingerprint)
+
+    def test_undated_first_run_automatically_backfills_31_calendar_dates(self):
+        entry = timecamp_entry(101, external_task_id=jira_external_id("org_1"))
+        tc = FakeTimeCampClient(entries=[entry], users=[timecamp_user()])
+        jira = FakeJiraClient()
+        state = self.new_state()
+
+        result = JiraTimeEntryExporter(
+            tc,
+            {"org_1": jira},
+            state,
+            today=TODAY,
+        ).run()
+
+        expected_from = TODAY - timedelta(days=30)
+        self.assertTrue(result.successful)
+        self.assertEqual(result.created, 1)
+        self.assertEqual(tc.entry_calls, [((expected_from, TODAY), {})])
+        persisted = JiraExportState.load(self.state_path)
+        self.assertEqual(persisted.cursor_date, TODAY.isoformat())
+        self.assertIsNone(persisted.initial_backfill_from)
+
+    def test_failed_automatic_backfill_reuses_its_original_start_date(self):
+        entry = timecamp_entry(101, external_task_id=jira_external_id("org_1"))
+        state = self.new_state()
+        failed_tc = FakeTimeCampClient(entries=[entry], users=[timecamp_user()])
+
+        first_result = JiraTimeEntryExporter(
+            failed_tc,
+            {"org_1": FakeJiraClient(fail_create=True)},
+            state,
+            today=TODAY,
+        ).run()
+
+        expected_from = TODAY - timedelta(days=30)
+        self.assertEqual(first_result.failed, 1)
+        failed_state = JiraExportState.load(self.state_path)
+        self.assertIsNone(failed_state.cursor_date)
+        self.assertEqual(
+            failed_state.initial_backfill_from,
+            expected_from.isoformat(),
+        )
+
+        retry_today = TODAY + timedelta(days=5)
+        retry_tc = FakeTimeCampClient(entries=[entry], users=[timecamp_user()])
+        retry_result = JiraTimeEntryExporter(
+            retry_tc,
+            {"org_1": FakeJiraClient()},
+            failed_state,
+            today=retry_today,
+        ).run()
+
+        self.assertTrue(retry_result.successful)
+        self.assertEqual(
+            retry_tc.entry_calls,
+            [((expected_from, retry_today), {})],
+        )
+        completed_state = JiraExportState.load(self.state_path)
+        self.assertEqual(completed_state.cursor_date, retry_today.isoformat())
+        self.assertIsNone(completed_state.initial_backfill_from)
+
+    def test_interrupted_automatic_backfill_persists_its_start_date(self):
+        tc = FakeTimeCampClient()
+        state = self.new_state()
+
+        with (
+            patch.object(tc, "get_tasks", side_effect=RuntimeError("interrupted")),
+            self.assertRaisesRegex(RuntimeError, "interrupted"),
+        ):
+            JiraTimeEntryExporter(
+                tc,
+                {"org_1": FakeJiraClient()},
+                state,
+                today=TODAY,
+            ).run()
+
+        persisted = JiraExportState.load(self.state_path)
+        self.assertIsNone(persisted.cursor_date)
+        self.assertEqual(
+            persisted.initial_backfill_from,
+            (TODAY - timedelta(days=30)).isoformat(),
+        )
+
+    def test_explicit_dates_override_an_unfinished_automatic_backfill(self):
+        state = self.new_state(initial_backfill_from="2026-07-11")
+        tc = FakeTimeCampClient()
+        explicit_from = date(2026, 6, 1)
+        explicit_to = date(2026, 6, 30)
+
+        result = JiraTimeEntryExporter(
+            tc,
+            {"org_1": FakeJiraClient()},
+            state,
+            today=TODAY,
+        ).run(explicit_from, explicit_to)
+
+        self.assertTrue(result.successful)
+        self.assertEqual(tc.entry_calls, [((explicit_from, explicit_to), {})])
+        completed_state = JiraExportState.load(self.state_path)
+        self.assertEqual(completed_state.cursor_date, TODAY.isoformat())
+        self.assertIsNone(completed_state.initial_backfill_from)
 
     def test_incremental_run_updates_and_propagates_deletion(self):
         mappings = {
@@ -585,6 +687,29 @@ class JiraExporterTest(unittest.TestCase):
         self.assertFalse(self.state_path.exists())
         self.assertIsNone(state.cursor_date)
 
+    def test_undated_first_dry_run_does_not_persist_bootstrap_state(self):
+        entry = timecamp_entry(101, external_task_id=jira_external_id("org_1"))
+        tc = FakeTimeCampClient(entries=[entry], users=[timecamp_user()])
+        jira = FakeJiraClient()
+        state = self.new_state()
+
+        result = JiraTimeEntryExporter(
+            tc,
+            {"org_1": jira},
+            state,
+            dry_run=True,
+            today=TODAY,
+        ).run()
+
+        self.assertTrue(result.successful)
+        self.assertEqual(
+            tc.entry_calls,
+            [((TODAY - timedelta(days=30), TODAY), {})],
+        )
+        self.assertFalse(self.state_path.exists())
+        self.assertIsNone(state.cursor_date)
+        self.assertIsNone(state.initial_backfill_from)
+
     def test_partial_failure_does_not_advance_cursor(self):
         state = self.new_state("2026-08-07")
         tc = FakeTimeCampClient(
@@ -818,7 +943,41 @@ class JiraExportStateTest(unittest.TestCase):
             migrated = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(migrated["version"], 2)
             self.assertEqual(migrated["adapter"], "jira")
+            self.assertIsNone(migrated["initial_backfill_from"])
             self.assertEqual(migrated["entries"]["101"]["remote_id"], "5001")
+
+    def test_round_trips_initial_backfill_start_in_v2_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "state.json"
+            state = JiraExportState(
+                path,
+                initial_backfill_from="2026-07-11",
+            )
+            state.save()
+
+            loaded = JiraExportState.load(path)
+
+            self.assertIsNone(loaded.cursor_date)
+            self.assertEqual(loaded.initial_backfill_from, "2026-07-11")
+
+    def test_rejects_invalid_initial_backfill_start(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "state.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "version": 2,
+                        "adapter": "jira",
+                        "cursor_date": None,
+                        "initial_backfill_from": "not-a-date",
+                        "entries": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "initial_backfill_from"):
+                JiraExportState.load(path)
 
     def test_rejects_unknown_state_version(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -910,6 +1069,80 @@ class JiraExportStateTest(unittest.TestCase):
             [item.kwargs["user_email"] for item in run_user_export.call_args_list],
             ["a@example.com", "z@example.com"],
         )
+
+    @patch("export_time_entries_jira.load_dotenv")
+    @patch("export_time_entries_jira.build_jira_clients")
+    @patch("export_time_entries_jira.TimeCampClient")
+    def test_all_users_initializes_each_user_with_separate_automatic_state(
+        self,
+        timecamp_client_class,
+        build_clients,
+        _load_dotenv,
+    ):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_paths = {
+                "a@example.com": Path(temp_dir) / "a-state.json",
+                "z@example.com": Path(temp_dir) / "z-state.json",
+            }
+            timecamp_client = timecamp_client_class.return_value
+            timecamp_client.get_users.return_value = [
+                {"user_id": "7", "email": "a@example.com"},
+                {"user_id": "8", "email": "z@example.com"},
+            ]
+            timecamp_client.get_tasks.return_value = []
+            timecamp_client.get_time_entries.return_value = []
+            timecamp_client.get_user_details.return_value = []
+            build_clients.return_value = {"org_1": FakeJiraClient()}
+            env = {
+                "TIMECAMP_API_TOKEN": "timecamp-token",
+                "JIRA_INSTANCES": json.dumps(
+                    [
+                        {
+                            "name": "Jira",
+                            "url": "https://jira.example.com",
+                            "email": "root@example.com",
+                            "token": "root-token",
+                        }
+                    ]
+                ),
+                "JIRA_USER_API_TOKENS": json.dumps(
+                    {
+                        "z@example.com": "z-token",
+                        "a@example.com": "a-token",
+                    }
+                ),
+            }
+
+            with (
+                patch.dict(os.environ, env, clear=True),
+                patch(
+                    "export_time_entries_jira.filtered_state_file",
+                    side_effect=lambda email: str(state_paths[email]),
+                ),
+            ):
+                exit_code = main(["--all-users"])
+
+            self.assertEqual(exit_code, 0)
+            today = date.today()
+            for path in state_paths.values():
+                state = JiraExportState.load(path)
+                self.assertEqual(state.cursor_date, today.isoformat())
+                self.assertIsNone(state.initial_backfill_from)
+            self.assertEqual(
+                timecamp_client.get_time_entries.call_args_list,
+                [
+                    call(
+                        today - timedelta(days=30),
+                        today,
+                        user_ids=[7],
+                    ),
+                    call(
+                        today - timedelta(days=30),
+                        today,
+                        user_ids=[8],
+                    ),
+                ],
+            )
 
     def test_finds_timecamp_user_by_case_insensitive_exact_email(self):
         user_id = find_timecamp_user_id(

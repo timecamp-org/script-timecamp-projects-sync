@@ -25,6 +25,7 @@ class JiraExportState:
         path: Any,
         cursor_date: Optional[str] = None,
         entries: Optional[Dict[str, JiraWorklogMapping]] = None,
+        initial_backfill_from: Optional[str] = None,
         *,
         _sync_state: Optional[TimeEntrySyncState] = None,
     ):
@@ -40,6 +41,7 @@ class JiraExportState:
                 "jira",
                 cursor_date,
                 sync_entries,
+                initial_backfill_from,
             )
 
     @classmethod
@@ -73,6 +75,14 @@ class JiraExportState:
     @cursor_date.setter
     def cursor_date(self, value: Optional[str]) -> None:
         self._sync_state.cursor_date = value
+
+    @property
+    def initial_backfill_from(self) -> Optional[str]:
+        return self._sync_state.initial_backfill_from
+
+    @initial_backfill_from.setter
+    def initial_backfill_from(self, value: Optional[str]) -> None:
+        self._sync_state.initial_backfill_from = value
 
     @property
     def entries(self) -> Dict[str, JiraWorklogMapping]:
@@ -117,6 +127,14 @@ class JiraSyncStateView:
     @cursor_date.setter
     def cursor_date(self, value: Optional[str]) -> None:
         self.state.cursor_date = value
+
+    @property
+    def initial_backfill_from(self) -> Optional[str]:
+        return self.state.initial_backfill_from
+
+    @initial_backfill_from.setter
+    def initial_backfill_from(self, value: Optional[str]) -> None:
+        self.state.initial_backfill_from = value
 
     def get(self, entry_id: Any) -> Optional[SyncMapping]:
         return self.state.get_sync(entry_id)

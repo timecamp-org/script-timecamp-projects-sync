@@ -3,7 +3,7 @@ import hashlib
 import json
 import os
 import re
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -46,6 +46,7 @@ from src.timecamp_client import TimeCampClient
 
 
 DEFAULT_STATE_FILE = "data/jira_time_entries_state.json"
+INITIAL_BACKFILL_DAYS = 31
 MIN_JIRA_WORKLOG_SECONDS = 60
 TIMECAMP_SERVER_TIMEZONE = ZoneInfo("Europe/Warsaw")
 ExportResult = SyncResult
@@ -228,13 +229,16 @@ class JiraTimeEntryExporter:
         today: Optional[date] = None,
         user_ids: Optional[List[int]] = None,
     ):
+        self.state = state
+        self.dry_run = dry_run
+        self.today = today or date.today()
         self.adapter = JiraTimeEntryAdapter(jira_clients)
         self.engine = TimeEntrySyncEngine(
             timecamp_client,
             self.adapter,
             state.as_sync_state(),
             dry_run=dry_run,
-            today=today,
+            today=self.today,
             user_ids=user_ids,
         )
         self.result = self.engine.result
@@ -244,6 +248,34 @@ class JiraTimeEntryExporter:
         backfill_from: Optional[date] = None,
         backfill_to: Optional[date] = None,
     ) -> SyncResult:
+        if (
+            backfill_from is None
+            and backfill_to is None
+            and self.state.cursor_date is None
+        ):
+            saved_initial_from = self.state.initial_backfill_from
+            if saved_initial_from is None:
+                backfill_from = self.today - timedelta(
+                    days=INITIAL_BACKFILL_DAYS - 1
+                )
+                if not self.dry_run:
+                    self.state.initial_backfill_from = backfill_from.isoformat()
+                    self.state.save()
+                print(
+                    "No incremental cursor found. Automatically backfilling "
+                    f"{INITIAL_BACKFILL_DAYS} calendar dates from "
+                    f"{backfill_from} through {self.today}."
+                )
+            else:
+                backfill_from = parse_iso_date(
+                    saved_initial_from,
+                    "state initial_backfill_from",
+                )
+                print(
+                    "No incremental cursor found. Resuming the automatic "
+                    f"backfill from {backfill_from} through {self.today}."
+                )
+            backfill_to = self.today
         return self.engine.run(backfill_from, backfill_to)
 
 
@@ -405,8 +437,10 @@ def build_jira_clients(
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Mirror TimeCamp time entries to Jira worklogs. The first run requires "
-            "--from and --to; later runs use the saved modification cursor."
+            "Mirror TimeCamp time entries to Jira worklogs. Without a saved "
+            "cursor, an undated run automatically backfills today and the "
+            "previous 30 calendar days; later runs use the saved modification "
+            "cursor."
         )
     )
     add_sync_cli_arguments(
@@ -439,6 +473,7 @@ def _run_user_export(
     backfill_from: Optional[date],
     backfill_to: Optional[date],
     user_email: Optional[str],
+    today: date,
 ) -> SyncResult:
     filtered_user_ids = None
     if user_email:
@@ -493,6 +528,7 @@ def _run_user_export(
         jira_clients,
         state,
         dry_run=args.dry_run,
+        today=today,
         user_ids=filtered_user_ids,
     ).run(backfill_from, backfill_to)
 
@@ -521,6 +557,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     load_dotenv(dotenv_path=args.env_file, override=True)
     try:
         backfill_from, backfill_to = resolve_backfill_dates(args)
+        today = date.today()
 
         timecamp_token = os.getenv("TIMECAMP_API_TOKEN", "").strip()
         if not timecamp_token:
@@ -558,6 +595,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                         backfill_from=backfill_from,
                         backfill_to=backfill_to,
                         user_email=user_email,
+                        today=today,
                     )
                 except Exception as exc:
                     print(f"Error for {user_email}: {exc}")
@@ -585,6 +623,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             backfill_from=backfill_from,
             backfill_to=backfill_to,
             user_email=args.user_email,
+            today=today,
         )
     except Exception as exc:
         print(f"Error: {exc}")

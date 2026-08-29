@@ -92,18 +92,25 @@ the corresponding issue and Jira instance. It writes by default and runs on the
 destination-neutral lifecycle documented in
 [`time-entry-sync.md`](time-entry-sync.md).
 
-The first run must specify the TimeCamp entry-date range to backfill:
-
-```bash
-uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --from 2026-08-01 --to 2026-08-10
-```
-
-After the first successful run, omit the dates. The exporter uses TimeCamp's
-entry modification filter and deletion feed, so an entry from months ago is
-still updated or deleted when somebody changes it today:
+When no state cursor exists, an undated run automatically backfills today plus
+the previous 30 calendar days:
 
 ```bash
 uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py
+```
+
+The exporter records the automatic start date before processing. If the run
+fails or is interrupted, later cron attempts resume from that same date instead
+of sliding the 31-day window forward. After the first successful run, the
+bootstrap marker is cleared and today's date becomes the incremental cursor.
+Later runs use TimeCamp's entry modification filter and deletion feed, so an
+entry from months ago is still updated or deleted when somebody changes it.
+
+Use explicit dates when the first export must include history older than the
+automatic window:
+
+```bash
+uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --from 2026-07-01 --to 2026-08-10
 ```
 
 Preview without changing Jira or the state file:
@@ -118,18 +125,18 @@ Restrict a backfill to one TimeCamp user by exact email:
 uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --from 2026-08-09 --to 2026-08-10 --user-email person@example.com --dry-run
 ```
 
-Backfill every user configured in `JIRA_USER_API_TOKENS`, then run all users
-incrementally:
+Export every user configured in `JIRA_USER_API_TOKENS`:
 
 ```bash
-uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --all-users --from 2026-08-01 --to 2026-08-10
 uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --all-users
 ```
 
 All-users mode runs users sequentially, keeps a separate state file for each
 email, and continues after an individual user fails. The final exit code is
 non-zero if any user fails. `--all-users` cannot be combined with `--user-email`
-or `--state-file`.
+or `--state-file`. A newly configured user is automatically initialized on the
+next undated run. Use `--all-users --from DATE --to DATE` only when every
+configured user needs the same explicit older range.
 
 For a filtered export, `JIRA_USER_API_TOKENS` is looked up first by user email
 and then by the Jira base URL from `JIRA_INSTANCES`. Both comparisons are
@@ -158,7 +165,7 @@ moving an existing incremental cursor. Use `--state-file PATH` or
 `JIRA_EXPORT_STATE_FILE` to override `data/jira_time_entries_state.json`. Use
 `--env-file PATH` to load another dotenv file explicitly.
 
-For cron, after every configured user has completed its initial backfill:
+For cron, configure the users and their tokens, then run the undated command:
 
 ```cron
 */15 * * * * cd /home/ubuntu/scripts/topo/script-timecamp-projects-sync && uv run --env-file .env --python 3.13 --with-requirements requirements.txt python export_time_entries_jira.py --all-users >> /home/ubuntu/crontab_scripts/logs/topo_jira_export.log 2>&1

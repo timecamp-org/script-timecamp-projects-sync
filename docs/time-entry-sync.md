@@ -7,10 +7,13 @@ Monday.com remains separate because it exports aggregate task totals.
 
 ## Lifecycle
 
-The first run requires an entry-date range. A successful first run stores today's
-date as the modification cursor. Later runs omit dates and request both TimeCamp
-entries modified since the inclusive cursor and the deletion feed for the same
-window. A deletion wins if the same entry appears in both responses.
+The shared engine requires either an entry-date range or an existing
+modification cursor. The Jira wrapper automatically supplies a 31-calendar-date
+range when its cursor is missing; other adapters may define their own bootstrap
+policy. A successful first run stores today's date as the modification cursor.
+Later runs omit dates and request both TimeCamp entries modified since the
+inclusive cursor and the deletion feed for the same window. A deletion wins if
+the same entry appears in both responses.
 
 For each entry, the engine can:
 
@@ -37,6 +40,7 @@ Each destination uses a separate version-2 JSON file:
   "version": 2,
   "adapter": "jira",
   "cursor_date": "2026-08-10",
+  "initial_backfill_from": null,
   "entries": {
     "123": {
       "target_key": "org_1|TCD-123",
@@ -49,7 +53,10 @@ Each destination uses a separate version-2 JSON file:
 
 Writes use a temporary file, `fsync`, and atomic replacement. State from another
 adapter is rejected. Existing Jira version-1 state is decoded and written as
-version 2 on the next live save. Keep state on persistent, backed-up storage.
+version 2 on the next live save. During an unfinished automatic Jira bootstrap,
+`initial_backfill_from` holds the fixed retry start date and `cursor_date`
+remains `null`. Successful completion advances the cursor and clears the
+bootstrap marker atomically. Keep state on persistent, backed-up storage.
 
 ## Common CLI
 

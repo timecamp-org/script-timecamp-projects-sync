@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 from dataclasses import asdict, dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
@@ -28,6 +29,7 @@ class TimeEntrySyncState:
         adapter_id: str,
         cursor_date: Optional[str] = None,
         entries: Optional[Dict[str, SyncMapping]] = None,
+        initial_backfill_from: Optional[str] = None,
     ):
         normalized_adapter_id = str(adapter_id).strip()
         if not normalized_adapter_id:
@@ -35,6 +37,7 @@ class TimeEntrySyncState:
         self.path = Path(path)
         self.adapter_id = normalized_adapter_id
         self.cursor_date = cursor_date
+        self.initial_backfill_from = initial_backfill_from
         self.entries = entries or {}
 
     @classmethod
@@ -76,6 +79,10 @@ class TimeEntrySyncState:
             )
 
         cursor_date = cls._validate_cursor(raw.get("cursor_date"), state_path)
+        initial_backfill_from = cls._validate_initial_backfill_from(
+            raw.get("initial_backfill_from"),
+            state_path,
+        )
         raw_entries = raw.get("entries", {})
         if not isinstance(raw_entries, dict):
             raise ValueError(f"Invalid entries in sync state {state_path}")
@@ -87,12 +94,36 @@ class TimeEntrySyncState:
                 raw_mapping,
                 state_path,
             )
-        return cls(state_path, adapter_id, cursor_date, entries)
+        return cls(
+            state_path,
+            adapter_id,
+            cursor_date,
+            entries,
+            initial_backfill_from,
+        )
 
     @staticmethod
     def _validate_cursor(value: Any, path: Path) -> Optional[str]:
         if value is not None and not isinstance(value, str):
             raise ValueError(f"Invalid cursor_date in sync state {path}")
+        return value
+
+    @staticmethod
+    def _validate_initial_backfill_from(
+        value: Any,
+        path: Path,
+    ) -> Optional[str]:
+        if value is not None and not isinstance(value, str):
+            raise ValueError(
+                f"Invalid initial_backfill_from in sync state {path}"
+            )
+        if value is not None:
+            try:
+                date.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid initial_backfill_from in sync state {path}"
+                ) from exc
         return value
 
     @staticmethod
@@ -134,6 +165,7 @@ class TimeEntrySyncState:
             "version": STATE_VERSION,
             "adapter": self.adapter_id,
             "cursor_date": self.cursor_date,
+            "initial_backfill_from": self.initial_backfill_from,
             "entries": {
                 entry_id: asdict(mapping)
                 for entry_id, mapping in sorted(self.entries.items())
