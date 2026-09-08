@@ -18,7 +18,17 @@ JIRA_USER_API_TOKENS='{"person@example.com":{"https://your-domain.atlassian.net"
 
 # Optional: prefix issue names with their Jira key, e.g. "[TCD-123] Task name"
 JIRA_PREFIX_ISSUE_KEY_TO_TASK_NAME=true
+
+# Optional: delay archiving completed Jira issues in TimeCamp. Defaults to 14.
+JIRA_ARCHIVING_DELAY_DAYS=14
 ```
+
+Issues in `Done`, `Closed`, `Resolved`, or `Completed` remain active in TimeCamp
+for 14 days after their Jira status category changed. Set
+`JIRA_ARCHIVING_DELAY_DAYS` to another non-negative whole number to change the
+window. A value of `0` restores the old behavior and archives those issues on
+the next synchronization. If a recently completed or reopened Jira issue was
+already archived in TimeCamp, the synchronization restores it automatically.
 
 2. `python fetch_jira.py` and by default output to `tasks.json`
     - Check what we have in native Jira integration to try to match task_id pattern
@@ -83,7 +93,8 @@ part of the existing bulk issue search, so it does not add per-issue API calls.
 3. `python sync_projects.py` (by default looks for `tasks.json`). Jira estimates
    are synchronized to TimeCamp task hour budgets through the v3 billing-settings
    endpoint. Tasks without a Jira estimate are left unchanged. Existing TimeCamp
-   names are updated only when they differ from the fetched Jira names.
+   names are updated only when they differ from the fetched Jira names. Jira
+   tasks present in the fetched data are restored if they were archived earlier.
 
 ## Export TimeCamp entries to Jira worklogs
 

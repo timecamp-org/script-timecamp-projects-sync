@@ -45,6 +45,7 @@ consumed by `sync_projects.py`:
     "name": "Build reporting dashboard",
     "task_id": "project_42",
     "parent_id": "client_acme",
+    "restore_if_archived": true,
     "original_estimate_seconds": 7200,
     "mandatory_tags": {
       "Client": ["Acme"],
@@ -59,6 +60,11 @@ consumed by `sync_projects.py`:
   }
 ]
 ```
+
+`restore_if_archived` is optional. When it is `true` and the `archive` sync
+action is enabled, a source task that already exists as archived in TimeCamp is
+restored. Jira fetches set this marker automatically. Sources that omit it keep
+the previous behavior, so the sync does not override manual archiving.
 
 ### Harvest ↔ TimeCamp Synchronization
 
@@ -111,6 +117,13 @@ uv run --env-file .env --with-requirements requirements.txt python export_time_e
 # Export every user configured in JIRA_USER_API_TOKENS
 uv run --env-file .env --with-requirements requirements.txt python export_time_entries_jira.py --all-users
 ```
+
+By default, Jira issues in `Done`, `Closed`, `Resolved`, or `Completed` stay
+active in TimeCamp for 14 days after their Jira status category changed. Set
+`JIRA_ARCHIVING_DELAY_DAYS` to a non-negative whole number to change the delay.
+Set it to `0` to archive completed issues on the next synchronization. The sync
+also restores a Jira task that is present in the fetched data but was archived
+in TimeCamp earlier.
 
 Set `JIRA_USER_API_TOKENS` to JSON keyed by user email and Jira base URL, such as
 `{"person@example.com":{"https://one.atlassian.net":"token-one","https://two.atlassian.net":"token-two"}}`,

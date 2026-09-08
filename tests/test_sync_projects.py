@@ -451,6 +451,102 @@ class SyncProjectsCliTest(unittest.TestCase):
 
         self.assertEqual(client.estimate_updates, [(201, 5400)])
 
+    def test_jira_source_task_is_restored_when_it_returns_during_delay(self):
+        class FakeClient:
+            def __init__(self):
+                self.restored_task_ids = []
+                self.tasks = [
+                    {
+                        "task_id": 201,
+                        "external_task_id": "sync_org_1_proj_TCD_TCD-123",
+                        "name": "[TCD-123] Recently completed",
+                        "archived": "1",
+                    }
+                ]
+
+            def get_tasks(self):
+                return self.tasks
+
+            def get_api_metrics_snapshot(self):
+                return {"counts": {}, "seconds": {}}
+
+            def restore_task(self, task_id):
+                self.restored_task_ids.append(task_id)
+                return {"task_id": task_id, "archived": 0}
+
+            def archive_task(self, task_id):
+                raise AssertionError("a source task must not be archived")
+
+        source_task = {
+            "task_id": "org_1_proj_TCD_TCD-123",
+            "parent_id": 0,
+            "name": "[TCD-123] Recently completed",
+            "restore_if_archived": True,
+        }
+        client = FakeClient()
+
+        with (
+            patch.object(sync_projects, "TIMECAMP_API_TOKEN", "token"),
+            patch.object(sync_projects, "load_tasks_from_json", return_value=[source_task]),
+            patch.object(sync_projects, "TimeCampClient", return_value=client),
+        ):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                sync_projects.sync_hierarchical_tasks_to_timecamp(
+                    {"archive"},
+                    "tasks.json",
+                    False,
+                )
+
+        self.assertEqual(client.restored_task_ids, [201])
+        self.assertEqual(client.tasks[0]["archived"], 0)
+        self.assertIn("- Restore candidates: 1", output.getvalue())
+        self.assertIn("- Restored: 1 source tasks", output.getvalue())
+
+    def test_source_task_without_restore_marker_stays_archived(self):
+        class FakeClient:
+            def get_tasks(self):
+                return [
+                    {
+                        "task_id": 201,
+                        "external_task_id": "source_1",
+                        "name": "Manually archived",
+                        "archived": 1,
+                    }
+                ]
+
+            def get_api_metrics_snapshot(self):
+                return {"counts": {}, "seconds": {}}
+
+            def restore_task(self, task_id):
+                raise AssertionError("restore requires an explicit source marker")
+
+            def archive_task(self, task_id):
+                raise AssertionError("an existing source task must not be archived")
+
+        source_task = {
+            "task_id": "source_1",
+            "parent_id": 0,
+            "name": "Manually archived",
+            "external_task_id": "source_1",
+        }
+
+        with (
+            patch.object(sync_projects, "TIMECAMP_API_TOKEN", "token"),
+            patch.object(sync_projects, "load_tasks_from_json", return_value=[source_task]),
+            patch.object(sync_projects, "TimeCampClient", return_value=FakeClient()),
+        ):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                sync_projects.sync_hierarchical_tasks_to_timecamp(
+                    {"archive"},
+                    "tasks.json",
+                    False,
+                )
+
+        self.assertIn("- Restore candidates: 0", output.getvalue())
+        self.assertIn("- Restored: 0 source tasks", output.getvalue())
+
     def test_strict_user_sync_skips_tasks_with_no_source_or_current_users(self):
         class FakeClient:
             def get_tasks(self):

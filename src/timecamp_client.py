@@ -184,11 +184,17 @@ class TimeCampClient:
         raise ValueError(f"Unexpected response format from TimeCamp API: {response_data}")
 
     def archive_task(self, task_id: Any) -> Any:
+        return self._set_task_archived(task_id, archived=True)
+
+    def restore_task(self, task_id: Any) -> Any:
+        return self._set_task_archived(task_id, archived=False)
+
+    def _set_task_archived(self, task_id: Any, archived: bool) -> Any:
         return self._request(
             "PUT",
             "tasks",
             json={
-                "archived": 1,
+                "archived": int(archived),
                 "task_id": task_id,
             },
         )

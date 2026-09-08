@@ -8,6 +8,8 @@ import requests
 from jira import JIRA
 
 JIRA_WORKLOG_PROPERTY_KEY = "timecamp.entry"
+DEFAULT_JIRA_ARCHIVING_DELAY_DAYS = 14
+JIRA_ARCHIVED_STATUSES = ("Done", "Closed", "Resolved", "Completed")
 
 
 @dataclass(frozen=True)
@@ -276,7 +278,11 @@ class JiraClient:
                 f"Failed to fetch Jira projects from {self.server}: {exc}"
             ) from exc
 
-    def get_issues_for_project(self, project_key: str) -> List[Dict[str, Any]]:
+    def get_issues_for_project(
+        self,
+        project_key: str,
+        archiving_delay_days: int = DEFAULT_JIRA_ARCHIVING_DELAY_DAYS,
+    ) -> List[Dict[str, Any]]:
         all_issues = []
         max_results = 100
         next_page_token = None
@@ -296,13 +302,9 @@ class JiraClient:
             "timetracking",
         ]
 
-        excluded_statuses = ["Done", "Closed", "Resolved", "Completed"]
-        excluded_statuses_jql = ", ".join(
-            self._quote_jql_value(status) for status in excluded_statuses
-        )
-        jql = (
-            f"project = {self._quote_jql_value(project_key)} "
-            f"AND status NOT IN ({excluded_statuses_jql})"
+        jql = self._build_issue_search_jql(
+            project_key,
+            archiving_delay_days,
         )
 
         while True:
@@ -329,6 +331,37 @@ class JiraClient:
                 break
 
         return all_issues
+
+    @classmethod
+    def _build_issue_search_jql(
+        cls,
+        project_key: str,
+        archiving_delay_days: int,
+    ) -> str:
+        try:
+            delay_days = int(archiving_delay_days)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Jira archiving delay must be a whole number") from exc
+
+        if delay_days < 0:
+            raise ValueError("Jira archiving delay cannot be negative")
+
+        archived_statuses_jql = ", ".join(
+            cls._quote_jql_value(status) for status in JIRA_ARCHIVED_STATUSES
+        )
+        active_status_clause = f"status NOT IN ({archived_statuses_jql})"
+        if delay_days == 0:
+            issue_status_clause = active_status_clause
+        else:
+            issue_status_clause = (
+                f"({active_status_clause} OR "
+                f"statusCategoryChangedDate >= -{delay_days}d)"
+            )
+
+        return (
+            f"project = {cls._quote_jql_value(project_key)} "
+            f"AND {issue_status_clause}"
+        )
 
     def create_worklog(
         self,

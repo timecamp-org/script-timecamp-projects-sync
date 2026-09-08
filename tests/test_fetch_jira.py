@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
-from fetch_jira import JiraClient, JiraFetcher
+from fetch_jira import JiraClient, JiraFetcher, get_jira_archiving_delay_days
 from src.jira_client import (
     build_jira_issue_external_id,
     generate_jira_org_id,
@@ -92,12 +92,40 @@ class JiraClientTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Failed to fetch Jira projects"):
             client.get_projects()
 
-    def test_get_issues_quotes_project_key_in_jql(self):
+    def test_get_issues_keeps_recently_archived_tasks_for_default_delay(self):
         client = object.__new__(JiraClient)
         client.server = "https://example.atlassian.net"
         client.session = FakeSession()
 
         client.get_issues_for_project("CF")
+
+        self.assertEqual(
+            client.session.calls[0]["params"]["jql"],
+            'project = "CF" AND (status NOT IN '
+            '("Done", "Closed", "Resolved", "Completed") OR '
+            'statusCategoryChangedDate >= -14d)',
+        )
+
+    def test_get_issues_uses_configured_archiving_delay(self):
+        client = object.__new__(JiraClient)
+        client.server = "https://example.atlassian.net"
+        client.session = FakeSession()
+
+        client.get_issues_for_project("CF", archiving_delay_days=3)
+
+        self.assertEqual(
+            client.session.calls[0]["params"]["jql"],
+            'project = "CF" AND (status NOT IN '
+            '("Done", "Closed", "Resolved", "Completed") OR '
+            'statusCategoryChangedDate >= -3d)',
+        )
+
+    def test_zero_archiving_delay_excludes_archived_statuses_immediately(self):
+        client = object.__new__(JiraClient)
+        client.server = "https://example.atlassian.net"
+        client.session = FakeSession()
+
+        client.get_issues_for_project("CF", archiving_delay_days=0)
 
         self.assertEqual(
             client.session.calls[0]["params"]["jql"],
@@ -236,6 +264,34 @@ class JiraExternalIdTest(unittest.TestCase):
 
 
 class JiraFetcherTest(unittest.TestCase):
+    def test_archiving_delay_defaults_to_14_days(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(get_jira_archiving_delay_days(), 14)
+
+    def test_archiving_delay_uses_environment_override(self):
+        with patch.dict(
+            os.environ,
+            {"JIRA_ARCHIVING_DELAY_DAYS": "3"},
+            clear=True,
+        ):
+            self.assertEqual(get_jira_archiving_delay_days(), 3)
+
+    def test_archiving_delay_rejects_invalid_environment_value(self):
+        for value in ("tomorrow", "-1", "1.5"):
+            with (
+                self.subTest(value=value),
+                patch.dict(
+                    os.environ,
+                    {"JIRA_ARCHIVING_DELAY_DAYS": value},
+                    clear=True,
+                ),
+            ):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "JIRA_ARCHIVING_DELAY_DAYS must be a non-negative whole number",
+                ):
+                    get_jira_archiving_delay_days()
+
     def test_prefixes_issue_key_when_enabled(self):
         with patch.dict(
             os.environ,
@@ -285,13 +341,18 @@ class JiraFetcherTest(unittest.TestCase):
             "token": "token",
         }]
         fetcher.prefix_issue_key_to_task_name = False
+        fetcher.archiving_delay_days = 14
 
         data = fetcher.fetch_all_data()
 
         issue = next(item for item in data if item["task_id"].endswith("_TCD-123"))
         self.assertEqual(issue["original_estimate"], "2h")
         self.assertEqual(issue["original_estimate_seconds"], 7200)
-        client.get_issues_for_project.assert_called_once_with("TCD")
+        self.assertTrue(issue["restore_if_archived"])
+        client.get_issues_for_project.assert_called_once_with(
+            "TCD",
+            archiving_delay_days=14,
+        )
 
 
 if __name__ == "__main__":

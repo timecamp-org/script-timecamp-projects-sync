@@ -5,6 +5,7 @@ from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 
 from src.jira_client import (
+    DEFAULT_JIRA_ARCHIVING_DELAY_DAYS,
     JiraClient as SharedJiraClient,
     build_jira_issue_external_id,
     build_jira_project_external_id,
@@ -16,6 +17,27 @@ load_dotenv(override=True)
 
 JiraClient = SharedJiraClient
 
+
+def get_jira_archiving_delay_days() -> int:
+    raw_value = os.getenv("JIRA_ARCHIVING_DELAY_DAYS")
+    if raw_value is None or not raw_value.strip():
+        return DEFAULT_JIRA_ARCHIVING_DELAY_DAYS
+
+    try:
+        delay_days = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(
+            "JIRA_ARCHIVING_DELAY_DAYS must be a non-negative whole number"
+        ) from exc
+
+    if delay_days < 0:
+        raise ValueError(
+            "JIRA_ARCHIVING_DELAY_DAYS must be a non-negative whole number"
+        )
+
+    return delay_days
+
+
 class JiraFetcher:
     """Main class for fetching data from multiple Jira instances"""
     
@@ -26,6 +48,7 @@ class JiraFetcher:
             os.getenv('JIRA_PREFIX_ISSUE_KEY_TO_TASK_NAME', '').strip().lower()
             in {'1', 'true', 'yes', 'y', 'on'}
         )
+        self.archiving_delay_days = get_jira_archiving_delay_days()
         
     def _load_instances_config(self) -> List[Dict[str, str]]:
         """
@@ -93,7 +116,8 @@ class JiraFetcher:
                 flattened_data.append({
                     'name': org_name,
                     'task_id': org_id,
-                    'parent_id': 0
+                    'parent_id': 0,
+                    'restore_if_archived': True,
                 })
                 
                 for project in projects:
@@ -109,11 +133,15 @@ class JiraFetcher:
                     flattened_data.append({
                         'name': project['name'],
                         'task_id': project_task_id,
-                        'parent_id': org_id
+                        'parent_id': org_id,
+                        'restore_if_archived': True,
                     })
                     
                     # Get all active issues for the project
-                    issues = client.get_issues_for_project(project['key'])
+                    issues = client.get_issues_for_project(
+                        project['key'],
+                        archiving_delay_days=self.archiving_delay_days,
+                    )
                     
                     # Create issue task_ids and parent mapping
                     # Store active issue keys for parent validation
@@ -156,6 +184,7 @@ class JiraFetcher:
                             'parent_id': parent_id,
                             'original_estimate': issue.get('original_estimate'),
                             'original_estimate_seconds': issue.get('original_estimate_seconds'),
+                            'restore_if_archived': True,
                         })
                 
             except Exception as e:
@@ -201,6 +230,10 @@ def main():
     print(f"Found {len(fetcher.instances)} instance(s) configured:")
     for instance in fetcher.instances:
         print(f"  - {instance['name']}: {instance['url']}")
+    print(
+        "Jira tasks will remain active in TimeCamp for "
+        f"{fetcher.archiving_delay_days} day(s) after entering an archived status."
+    )
     
     # Fetch all data
     data = fetcher.fetch_all_data()

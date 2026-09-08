@@ -453,6 +453,19 @@ def timecamp_name_matches(timecamp_task, source_name):
     )
 
 
+def timecamp_task_is_archived(timecamp_task):
+    archived = timecamp_task.get("archived")
+    parsed_archived = _int_or_none(archived)
+    if parsed_archived is not None:
+        return parsed_archived != 0
+
+    return str(archived or "").strip().casefold() in {"true", "yes", "on"}
+
+
+def source_task_should_be_restored(source_task):
+    return source_task.get("restore_if_archived") is True
+
+
 def print_api_metrics_delta(label, start_metrics, end_metrics):
     delta = api_metrics_delta(start_metrics, end_metrics)
     counts = delta["counts"]
@@ -574,6 +587,8 @@ def sync_hierarchical_tasks_to_timecamp(
     # Track sync statistics
     created_tasks = 0
     existing_tasks = 0
+    restored_tasks = 0
+    restore_errors = 0
     archived_tasks = 0
     skipped_missing_tasks = 0
     assigned_mandatory_tags = 0
@@ -679,11 +694,26 @@ def sync_hierarchical_tasks_to_timecamp(
             )
 
     if "archive" in enabled_actions:
+        restore_candidate_count = sum(
+            1
+            for task in azure_tasks_sorted
+            if (
+                source_task_should_be_restored(task)
+                and get_source_external_task_id(task) in timecamp_tasks_map
+                and timecamp_task_is_archived(
+                    timecamp_tasks_map[get_source_external_task_id(task)]
+                )
+            )
+        )
         archive_candidate_count = sum(
             1
             for external_id, timecamp_task in timecamp_tasks_map.items()
-            if external_id not in source_external_ids and not timecamp_task.get('archived')
+            if (
+                external_id not in source_external_ids
+                and not timecamp_task_is_archived(timecamp_task)
+            )
         )
+        print(f"- Restore candidates: {restore_candidate_count}")
         print(f"- Archive candidates: {archive_candidate_count}")
 
     print("Processing tasks in hierarchy order...")
@@ -712,12 +742,16 @@ def sync_hierarchical_tasks_to_timecamp(
                     f"names_updated={names_updated}, "
                     f"names_current={names_current}, "
                 )
+            archive_progress = ""
+            if "archive" in enabled_actions:
+                archive_progress = f"restored={restored_tasks}, "
             print(
                 f"Processed {processed_count}/{len(azure_tasks_sorted)} task(s): "
                 f"created={created_tasks}, existing={existing_tasks}, "
                 f"missing_skipped={skipped_missing_tasks}, "
                 f"{name_progress}"
                 f"{estimate_progress}"
+                f"{archive_progress}"
                 f"mandatory_tags={assigned_mandatory_tags}, "
                 f"mandatory_tag_cache_skips={skipped_mandatory_tag_cache}, "
                 f"users_assigned={assigned_users_count}, "
@@ -771,6 +805,21 @@ def sync_hierarchical_tasks_to_timecamp(
             existing_task = timecamp_tasks_map[external_id]
             source_to_timecamp_map[task['task_id']] = existing_task['task_id']
             existing_tasks += 1
+            if (
+                "archive" in enabled_actions
+                and source_task_should_be_restored(task)
+                and timecamp_task_is_archived(existing_task)
+            ):
+                print(f"Restoring TimeCamp task: {existing_task['name']}")
+                try:
+                    client.restore_task(existing_task['task_id'])
+                    existing_task['archived'] = 0
+                    restored_tasks += 1
+                except Exception as e:
+                    if isinstance(e, TimeCampRateLimitError):
+                        stop_on_rate_limit(e)
+                    restore_errors += 1
+                    print(f"Error restoring task {existing_task['name']}: {e}")
 
         if "names" in enabled_actions:
             try:
@@ -922,7 +971,10 @@ def sync_hierarchical_tasks_to_timecamp(
     archive_started_at = perf_counter()
     if "archive" in enabled_actions:
         for external_id, timecamp_task in timecamp_tasks_map.items():
-            if external_id not in active_external_ids and not timecamp_task.get('archived'):
+            if (
+                external_id not in active_external_ids
+                and not timecamp_task_is_archived(timecamp_task)
+            ):
                 print(f"Archiving TimeCamp task: {timecamp_task['name']}")
                 try:
                     client.archive_task(timecamp_task['task_id'])
@@ -955,6 +1007,10 @@ def sync_hierarchical_tasks_to_timecamp(
     print(f"\nSynchronization completed successfully!")
     print(f"- Created: {created_tasks} new tasks")
     print(f"- Existing source matches: {existing_tasks} tasks")
+    if "archive" in enabled_actions:
+        print(f"- Restored: {restored_tasks} source tasks")
+        if restore_errors:
+            print(f"- Restore errors: {restore_errors}")
     print(f"- Archived: {archived_tasks} obsolete tasks")
     if "tasks" not in enabled_actions:
         print("- Task creation skipped because tasks action is disabled")

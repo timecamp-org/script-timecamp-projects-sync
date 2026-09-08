@@ -190,6 +190,47 @@ class TimeCampClientTest(unittest.TestCase):
             ],
         )
 
+    def test_archive_and_restore_task_send_explicit_status(self):
+        calls = []
+
+        class FakeClient(TimeCampClient):
+            def __init__(self):
+                pass
+
+            def _request(self, method, endpoint, json=None, params=None):
+                calls.append(
+                    {
+                        "method": method,
+                        "endpoint": endpoint,
+                        "json": json,
+                        "params": params,
+                    }
+                )
+                return {"task_id": json["task_id"], "archived": json["archived"]}
+
+        client = FakeClient()
+
+        client.archive_task(456)
+        client.restore_task(456)
+
+        self.assertEqual(
+            calls,
+            [
+                {
+                    "method": "PUT",
+                    "endpoint": "tasks",
+                    "json": {"archived": 1, "task_id": 456},
+                    "params": None,
+                },
+                {
+                    "method": "PUT",
+                    "endpoint": "tasks",
+                    "json": {"archived": 0, "task_id": 456},
+                    "params": None,
+                },
+            ],
+        )
+
     def test_update_time_entry_task_uses_v3_endpoint(self):
         calls = []
 
