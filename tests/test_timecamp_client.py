@@ -115,6 +115,39 @@ class TimeCampClientTest(unittest.TestCase):
             ],
         )
 
+    def test_assign_custom_field_to_task_uses_v3_endpoint(self):
+        calls = []
+
+        class FakeClient(TimeCampClient):
+            def __init__(self):
+                pass
+
+            def _request(self, method, endpoint, json=None, params=None):
+                calls.append(
+                    {
+                        "method": method,
+                        "endpoint": endpoint,
+                        "json": json,
+                        "params": params,
+                    }
+                )
+                return {"data": "ok"}
+
+        response = FakeClient().assign_custom_field_to_task(123, 456, "Client")
+
+        self.assertEqual(response, {"data": "ok"})
+        self.assertEqual(
+            calls,
+            [
+                {
+                    "method": "POST",
+                    "endpoint": "v3/custom-fields/456/assign/123",
+                    "json": {"value": "Client"},
+                    "params": None,
+                }
+            ],
+        )
+
     def test_update_task_estimate_uses_v3_billing_settings_endpoint(self):
         calls = []
 

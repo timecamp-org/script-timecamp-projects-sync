@@ -168,6 +168,7 @@ class SyncProjectsCliTest(unittest.TestCase):
             "Processed 2/2 task(s): created=1, existing=1, missing_skipped=0, "
             "mandatory_tags=0, mandatory_tag_cache_skips=0, "
             "users_assigned=1, users_unassigned=0, "
+            "custom_fields=0, "
             "api_calls=1, elapsed=0.00s",
             lines,
         )

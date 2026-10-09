@@ -56,6 +56,10 @@ consumed by `sync_projects.py`:
         "email": "developer@example.com",
         "username": "Developer Name"
       }
+    },
+    "custom_fields": {
+      "456": "Client",
+      "789": "W-2"
     }
   }
 ]
@@ -65,6 +69,10 @@ consumed by `sync_projects.py`:
 action is enabled, a source task that already exists as archived in TimeCamp is
 restored. Jira fetches set this marker automatically. Sources that omit it keep
 the previous behavior, so the sync does not override manual archiving.
+
+`custom_fields` maps TimeCamp custom field template ids to values. During sync
+the engine assigns each value with
+`POST /v3/custom-fields/{template_id}/assign/{task_id}`.
 
 ### Harvest ↔ TimeCamp Synchronization
 

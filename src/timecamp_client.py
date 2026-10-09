@@ -359,6 +359,18 @@ class TimeCampClient:
             json={"userIds": [int(user_id) for user_id in user_ids]},
         )
 
+    def assign_custom_field_to_task(
+        self,
+        task_id: Any,
+        template_id: Any,
+        value: str,
+    ) -> Any:
+        return self._request(
+            "POST",
+            f"v3/custom-fields/{template_id}/assign/{task_id}",
+            json={"value": value},
+        )
+
     def get_time_entries(
         self,
         start_date: Any = None,
