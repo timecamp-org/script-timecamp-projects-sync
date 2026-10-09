@@ -15,6 +15,10 @@ from src.assigned_users import (
     get_task_assigned_users,
     sync_users_to_task,
 )
+from src.custom_fields import (
+    get_task_custom_fields,
+    sync_custom_fields_to_task,
+)
 from src.mandatory_tags import (
     ensure_mandatory_tags,
     get_desired_mandatory_tag_assignments,
@@ -52,6 +56,7 @@ DEFAULT_SYNC_ACTIONS = {
     "tags",
     "mandatory_tags",
     "users",
+    "custom_fields",
 }
 SYNC_ACTION_ORDER = (
     "tasks",
@@ -60,6 +65,7 @@ SYNC_ACTION_ORDER = (
     "tags",
     "mandatory_tags",
     "users",
+    "custom_fields",
     "archive",
 )
 SYNC_ACTION_DESCRIPTIONS = {
@@ -69,6 +75,7 @@ SYNC_ACTION_DESCRIPTIONS = {
     "tags": "Create or restore mandatory tag lists and tags",
     "mandatory_tags": "Assign mandatory tags to TimeCamp tasks",
     "users": "Assign users to TimeCamp tasks",
+    "custom_fields": "Assign custom field values to TimeCamp tasks",
     "archive": "Archive TimeCamp tasks missing from source data",
 }
 SYNC_ACTION_ALIASES = {
@@ -87,6 +94,8 @@ SYNC_ACTION_ALIASES = {
     "user": "users",
     "assigned_users": "users",
     "user_assignments": "users",
+    "custom_field": "custom_fields",
+    "custom_field_assignments": "custom_fields",
 }
 
 
@@ -598,6 +607,8 @@ def sync_hierarchical_tasks_to_timecamp(
     unassigned_users_count = 0
     skipped_user_sync_no_users = 0
     user_assignment_errors = 0
+    assigned_custom_fields = 0
+    custom_field_assignment_errors = 0
     names_updated = 0
     names_current = 0
     name_errors = 0
@@ -693,6 +704,12 @@ def sync_hierarchical_tasks_to_timecamp(
                 f"{strict_user_sync_candidate_count} task(s)"
             )
 
+    if "custom_fields" in enabled_actions:
+        custom_field_task_count = sum(
+            1 for task in azure_tasks_sorted if get_task_custom_fields(task)
+        )
+        print(f"- Tasks with source custom fields: {custom_field_task_count}")
+
     if "archive" in enabled_actions:
         restore_candidate_count = sum(
             1
@@ -756,6 +773,7 @@ def sync_hierarchical_tasks_to_timecamp(
                 f"mandatory_tag_cache_skips={skipped_mandatory_tag_cache}, "
                 f"users_assigned={assigned_users_count}, "
                 f"users_unassigned={unassigned_users_count}, "
+                f"custom_fields={assigned_custom_fields}, "
                 f"api_calls={api_calls}, "
                 f"elapsed={format_seconds(perf_counter() - task_loop_started_at)}"
             )
@@ -953,6 +971,20 @@ def sync_hierarchical_tasks_to_timecamp(
                     user_assignment_errors += 1
                     print(f"Error assigning users to task {task['name']}: {e}")
 
+        if "custom_fields" in enabled_actions and get_task_custom_fields(task):
+            try:
+                custom_field_result = sync_custom_fields_to_task(
+                    client=client,
+                    timecamp_task_id=source_to_timecamp_map[task["task_id"]],
+                    source_task=task,
+                )
+                assigned_custom_fields += custom_field_result.assigned
+            except Exception as e:
+                if isinstance(e, TimeCampRateLimitError):
+                    stop_on_rate_limit(e)
+                custom_field_assignment_errors += 1
+                print(f"Error assigning custom fields to task {task['name']}: {e}")
+
         log_task_progress(processed_count)
 
     api_metrics_after_task_loop = get_api_metrics_snapshot(client)
@@ -1041,6 +1073,10 @@ def sync_hierarchical_tasks_to_timecamp(
         )
     if user_assignment_errors:
         print(f"- User assignment errors: {user_assignment_errors}")
+    if "custom_fields" in enabled_actions:
+        print(f"- Custom fields assigned/updated: {assigned_custom_fields}")
+    if custom_field_assignment_errors:
+        print(f"- Custom field assignment errors: {custom_field_assignment_errors}")
     print(f"- Total processed: {len(azure_tasks_sorted)} tasks")
 
 def show_sync_preview(
@@ -1082,6 +1118,10 @@ def show_sync_preview(
     assigned_user_task_count = sum(1 for task in tasks if get_task_assigned_users(task))
     if assigned_user_task_count:
         print(f"  - Tasks with assigned users: {assigned_user_task_count}")
+
+    custom_field_task_count = sum(1 for task in tasks if get_task_custom_fields(task))
+    if custom_field_task_count:
+        print(f"  - Tasks with custom fields: {custom_field_task_count}")
 
     estimated_task_count = sum(
         1 for task in tasks if task.get("original_estimate_seconds") is not None

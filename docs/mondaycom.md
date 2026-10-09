@@ -43,7 +43,7 @@ TIMECAMP_STRICT_USER_SYNC=true
 ```
 
 Available `TIMECAMP_SYNC_ACTIONS`: `tasks`, `names`, `estimates`, `archive`,
-`tags`, `mandatory_tags`, `users`.
+`tags`, `mandatory_tags`, `users`, `custom_fields`.
 
 ## Manual Run
 
