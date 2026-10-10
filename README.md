@@ -107,6 +107,25 @@ python3 fetch_azuredevops.py
 python3 sync_projects.py
 ```
 
+The fetcher makes each TimeCamp external task ID from the organization URL,
+for example `sync_org_955312_1234` for work item 1234. The same URL always
+gives the same ID. Letter case, spaces at the start or end, and a `/` at the
+end of the URL do not change the ID. Thus the sync finds the same TimeCamp
+task on each run. A work item that goes to Done is archived, and the sync
+restores the same task when the work item becomes active again.
+
+If you change the organization URL, the IDs change too. An example is a move
+from `https://acme.visualstudio.com` to `https://dev.azure.com/acme`. The next
+sync then archives all tasks of that organization and creates them again.
+
+**One-time change after you update.** Older versions made a new random ID on
+each run. Thus each sync archived all Azure DevOps tasks from the previous run
+and created new copies. The first sync after the update does this one last
+time: it archives the tasks with the old random IDs and creates tasks with
+stable IDs. After that, the sync keeps the same tasks. This also applies if
+you set `PYTHONHASHSEED` to keep the old IDs stable. You can remove that
+setting after the update. Archived tasks keep their time entries.
+
 ### Multiple Jira instances ↔ TimeCamp Synchronization
 
 ```bash
