@@ -83,7 +83,7 @@ class SyncProjectsCliTest(unittest.TestCase):
                     "seconds": dict(self.seconds),
                 }
 
-            def get_tasks(self):
+            def get_tasks(self, include_archived=False):
                 self._record_api_call("GET tasks")
                 return [
                     {
@@ -195,7 +195,7 @@ class SyncProjectsCliTest(unittest.TestCase):
                     "seconds": dict(self.seconds),
                 }
 
-            def get_tasks(self):
+            def get_tasks(self, include_archived=False):
                 self._record_api_call("GET tasks")
                 return [
                     {
@@ -304,7 +304,7 @@ class SyncProjectsCliTest(unittest.TestCase):
                     "seconds": dict(self.seconds),
                 }
 
-            def get_tasks(self):
+            def get_tasks(self, include_archived=False):
                 self._record_api_call("GET tasks")
                 return self.tasks
 
@@ -373,7 +373,7 @@ class SyncProjectsCliTest(unittest.TestCase):
             def __init__(self):
                 self.created_names = []
 
-            def get_tasks(self):
+            def get_tasks(self, include_archived=False):
                 return []
 
             def get_api_metrics_snapshot(self):
@@ -413,7 +413,7 @@ class SyncProjectsCliTest(unittest.TestCase):
             def __init__(self):
                 self.estimate_updates = []
 
-            def get_tasks(self):
+            def get_tasks(self, include_archived=False):
                 return []
 
             def get_api_metrics_snapshot(self):
@@ -465,8 +465,12 @@ class SyncProjectsCliTest(unittest.TestCase):
                     }
                 ]
 
-            def get_tasks(self):
-                return self.tasks
+            def get_tasks(self, include_archived=False):
+                # Like the real API: archived tasks only with status=all.
+                return [
+                    task for task in self.tasks
+                    if include_archived or task["archived"] == "0"
+                ]
 
             def get_api_metrics_snapshot(self):
                 return {"counts": {}, "seconds": {}}
@@ -504,9 +508,151 @@ class SyncProjectsCliTest(unittest.TestCase):
         self.assertIn("- Restore candidates: 1", output.getvalue())
         self.assertIn("- Restored: 1 source tasks", output.getvalue())
 
-    def test_source_task_without_restore_marker_stays_archived(self):
+    def test_source_task_without_restore_marker_is_restored(self):
         class FakeClient:
-            def get_tasks(self):
+            def __init__(self):
+                self.restored_task_ids = []
+
+            def get_tasks(self, include_archived=False):
+                # Like the real API: archived tasks only with status=all.
+                if not include_archived:
+                    return []
+                return [
+                    {
+                        "task_id": 201,
+                        "external_task_id": "sync_org_1_42",
+                        "name": "Moved from Done back to Revert",
+                        "archived": "1",
+                    }
+                ]
+
+            def get_api_metrics_snapshot(self):
+                return {"counts": {}, "seconds": {}}
+
+            def create_task(self, name, parent_id, external_task_id):
+                raise AssertionError("an archived match must be restored, not duplicated")
+
+            def restore_task(self, task_id):
+                self.restored_task_ids.append(task_id)
+                return {"task_id": task_id, "archived": 0}
+
+            def archive_task(self, task_id):
+                raise AssertionError("a source task must not be archived")
+
+        source_task = {
+            "task_id": "org_1_42",
+            "parent_id": 0,
+            "name": "Moved from Done back to Revert",
+        }
+        client = FakeClient()
+
+        with (
+            patch.object(sync_projects, "TIMECAMP_API_TOKEN", "token"),
+            patch.object(sync_projects, "load_tasks_from_json", return_value=[source_task]),
+            patch.object(sync_projects, "TimeCampClient", return_value=client),
+        ):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                sync_projects.sync_hierarchical_tasks_to_timecamp(
+                    {"tasks", "archive"},
+                    "tasks.json",
+                    False,
+                )
+
+        self.assertEqual(client.restored_task_ids, [201])
+        self.assertIn("- Restore candidates: 1", output.getvalue())
+        self.assertIn("- Restored: 1 source tasks", output.getvalue())
+
+    def test_returning_source_task_is_not_restored_without_archive_action(self):
+        class FakeClient:
+            def get_tasks(self, include_archived=False):
+                return [
+                    {
+                        "task_id": 201,
+                        "external_task_id": "source_1",
+                        "name": "Archived",
+                        "archived": 1,
+                    }
+                ]
+
+            def get_api_metrics_snapshot(self):
+                return {"counts": {}, "seconds": {}}
+
+            def restore_task(self, task_id):
+                raise AssertionError("restore requires the archive action")
+
+        source_task = {
+            "task_id": "source_1",
+            "parent_id": 0,
+            "name": "Archived",
+            "external_task_id": "source_1",
+        }
+
+        with (
+            patch.object(sync_projects, "TIMECAMP_API_TOKEN", "token"),
+            patch.object(sync_projects, "load_tasks_from_json", return_value=[source_task]),
+            patch.object(sync_projects, "TimeCampClient", return_value=FakeClient()),
+        ):
+            with redirect_stdout(io.StringIO()):
+                sync_projects.sync_hierarchical_tasks_to_timecamp(
+                    {"tasks"},
+                    "tasks.json",
+                    False,
+                )
+
+    def test_active_duplicate_is_used_instead_of_archived_copy(self):
+        class FakeClient:
+            def get_tasks(self, include_archived=False):
+                return [
+                    {
+                        "task_id": 201,
+                        "external_task_id": "source_1",
+                        "name": "Task",
+                        "archived": 0,
+                    },
+                    {
+                        "task_id": 202,
+                        "external_task_id": "source_1",
+                        "name": "Task",
+                        "archived": 1,
+                    },
+                ]
+
+            def get_api_metrics_snapshot(self):
+                return {"counts": {}, "seconds": {}}
+
+            def restore_task(self, task_id):
+                raise AssertionError("the archived duplicate must stay archived")
+
+            def archive_task(self, task_id):
+                raise AssertionError("the active task must not be archived")
+
+        source_task = {
+            "task_id": "source_1",
+            "parent_id": 0,
+            "name": "Task",
+            "external_task_id": "source_1",
+        }
+
+        with (
+            patch.object(sync_projects, "TIMECAMP_API_TOKEN", "token"),
+            patch.object(sync_projects, "load_tasks_from_json", return_value=[source_task]),
+            patch.object(sync_projects, "TimeCampClient", return_value=FakeClient()),
+        ):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                sync_projects.sync_hierarchical_tasks_to_timecamp(
+                    {"archive"},
+                    "tasks.json",
+                    False,
+                )
+
+        self.assertIn("- Restore candidates: 0", output.getvalue())
+        self.assertIn("- Archive candidates: 0", output.getvalue())
+
+    def test_source_task_with_restore_disabled_stays_archived(self):
+        class FakeClient:
+            def get_tasks(self, include_archived=False):
                 return [
                     {
                         "task_id": 201,
@@ -520,7 +666,7 @@ class SyncProjectsCliTest(unittest.TestCase):
                 return {"counts": {}, "seconds": {}}
 
             def restore_task(self, task_id):
-                raise AssertionError("restore requires an explicit source marker")
+                raise AssertionError("restore_if_archived: false must keep the task archived")
 
             def archive_task(self, task_id):
                 raise AssertionError("an existing source task must not be archived")
@@ -530,6 +676,7 @@ class SyncProjectsCliTest(unittest.TestCase):
             "parent_id": 0,
             "name": "Manually archived",
             "external_task_id": "source_1",
+            "restore_if_archived": False,
         }
 
         with (
@@ -550,7 +697,7 @@ class SyncProjectsCliTest(unittest.TestCase):
 
     def test_strict_user_sync_skips_tasks_with_no_source_or_current_users(self):
         class FakeClient:
-            def get_tasks(self):
+            def get_tasks(self, include_archived=False):
                 return [
                     {
                         "task_id": 123,
@@ -599,7 +746,7 @@ class SyncProjectsCliTest(unittest.TestCase):
 
     def test_strict_user_sync_runs_for_tasks_without_assigned_users(self):
         class FakeClient:
-            def get_tasks(self):
+            def get_tasks(self, include_archived=False):
                 return [
                     {
                         "task_id": 123,
@@ -668,7 +815,7 @@ class SyncProjectsCliTest(unittest.TestCase):
                     "seconds": dict(self.seconds),
                 }
 
-            def get_tasks(self):
+            def get_tasks(self, include_archived=False):
                 self._record_api_call("GET tasks")
                 return [
                     {
@@ -740,7 +887,7 @@ class SyncProjectsCliTest(unittest.TestCase):
                     "seconds": dict(self.seconds),
                 }
 
-            def get_tasks(self):
+            def get_tasks(self, include_archived=False):
                 return [
                     {
                         "task_id": 123,
@@ -826,7 +973,7 @@ class SyncProjectsCliTest(unittest.TestCase):
                     "seconds": dict(self.seconds),
                 }
 
-            def get_tasks(self):
+            def get_tasks(self, include_archived=False):
                 return [
                     {
                         "task_id": 123,
@@ -916,7 +1063,7 @@ class SyncProjectsCliTest(unittest.TestCase):
                     "seconds": dict(self.seconds),
                 }
 
-            def get_tasks(self):
+            def get_tasks(self, include_archived=False):
                 return [
                     {
                         "task_id": 123,

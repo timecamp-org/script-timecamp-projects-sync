@@ -76,7 +76,7 @@ SYNC_ACTION_DESCRIPTIONS = {
     "mandatory_tags": "Assign mandatory tags to TimeCamp tasks",
     "users": "Assign users to TimeCamp tasks",
     "custom_fields": "Assign custom field values to TimeCamp tasks",
-    "archive": "Archive TimeCamp tasks missing from source data",
+    "archive": "Archive TimeCamp tasks missing from source data and restore returning ones",
 }
 SYNC_ACTION_ALIASES = {
     "create_tasks": "tasks",
@@ -472,7 +472,10 @@ def timecamp_task_is_archived(timecamp_task):
 
 
 def source_task_should_be_restored(source_task):
-    return source_task.get("restore_if_archived") is True
+    # Source data is the source of truth: a task that is present again (for
+    # example moved from Done back to an active status) comes back unless the
+    # source explicitly opts out to keep a manual TimeCamp archive.
+    return source_task.get("restore_if_archived") is not False
 
 
 def print_api_metrics_delta(label, start_metrics, end_metrics):
@@ -548,7 +551,9 @@ def sync_hierarchical_tasks_to_timecamp(
     api_metrics_before_setup = get_api_metrics_snapshot(client)
     
     # Get existing TimeCamp tasks
-    timecamp_entries = client.get_tasks()
+    # Archived tasks are needed to restore returning source tasks instead of
+    # creating duplicates.
+    timecamp_entries = client.get_tasks(include_archived=True)
 
     # Ensure all mandatory tag lists/tags exist before tasks are assigned to them.
     mandatory_tag_sync = None
@@ -583,6 +588,14 @@ def sync_hierarchical_tasks_to_timecamp(
         if external_id and (
             external_id.startswith('sync_') or external_id in source_external_ids
         ):
+            current_entry = timecamp_tasks_map.get(external_id)
+            # Prefer an active duplicate so restore never revives a stale copy.
+            if (
+                current_entry is not None
+                and timecamp_task_is_archived(entry)
+                and not timecamp_task_is_archived(current_entry)
+            ):
+                continue
             timecamp_tasks_map[external_id] = entry
     
     print(f"Found {len(timecamp_tasks_map)} existing sync/source tasks in TimeCamp")
@@ -1036,7 +1049,7 @@ def sync_hierarchical_tasks_to_timecamp(
             f"{TIMECAMP_MANDATORY_TAG_CACHE_FILE}"
         )
     
-    print(f"\nSynchronization completed successfully!")
+    print("\nSynchronization completed successfully!")
     print(f"- Created: {created_tasks} new tasks")
     print(f"- Existing source matches: {existing_tasks} tasks")
     if "archive" in enabled_actions:

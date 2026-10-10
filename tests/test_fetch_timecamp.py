@@ -1,5 +1,7 @@
+import io
 import os
 import unittest
+from contextlib import redirect_stdout
 
 from fetch_timecamp import TimeCampFetcher, build_task_structure
 
@@ -14,17 +16,36 @@ class FetchTimeCampTest(unittest.TestCase):
             def __init__(self, api_token):
                 created_clients.append(api_token)
 
-            def get_tasks(self):
+            def get_tasks(self, include_archived=False):
                 return []
 
         try:
-            fetcher = TimeCampFetcher(client_cls=FakeClient)
+            TimeCampFetcher(client_cls=FakeClient)
             self.assertEqual(created_clients, ["fetch-token"])
         finally:
             if previous_token is None:
                 os.environ.pop("TIMECAMP_API_TOKEN_FETCH", None)
             else:
                 os.environ["TIMECAMP_API_TOKEN_FETCH"] = previous_token
+
+    def test_fetch_requests_archived_tasks_only_when_included(self):
+        requested = []
+
+        class FakeClient:
+            def __init__(self, api_token):
+                pass
+
+            def get_tasks(self, include_archived=False):
+                requested.append(include_archived)
+                return []
+
+        fetcher = TimeCampFetcher(api_token="token", client_cls=FakeClient)
+
+        with redirect_stdout(io.StringIO()):
+            fetcher.fetch_all_data()
+            fetcher.fetch_all_data(active_only=False)
+
+        self.assertEqual(requested, [False, True])
 
     def test_build_task_structure_preserves_included_timecamp_hierarchy(self):
         source_tasks = [

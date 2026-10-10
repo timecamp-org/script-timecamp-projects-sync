@@ -88,7 +88,7 @@ class TimeCampFetcher:
 
     def fetch_all_data(self, active_only: bool = True) -> List[Dict[str, Any]]:
         print("Fetching tasks from TimeCamp...")
-        tasks = self.client.get_tasks()
+        tasks = self.client.get_tasks(include_archived=not active_only)
         print(f"  Found {len(tasks)} tasks")
 
         data = build_task_structure(tasks, active_only=active_only)

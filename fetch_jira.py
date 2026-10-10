@@ -117,7 +117,6 @@ class JiraFetcher:
                     'name': org_name,
                     'task_id': org_id,
                     'parent_id': 0,
-                    'restore_if_archived': True,
                 })
                 
                 for project in projects:
@@ -134,7 +133,6 @@ class JiraFetcher:
                         'name': project['name'],
                         'task_id': project_task_id,
                         'parent_id': org_id,
-                        'restore_if_archived': True,
                     })
                     
                     # Get all active issues for the project
@@ -184,7 +182,6 @@ class JiraFetcher:
                             'parent_id': parent_id,
                             'original_estimate': issue.get('original_estimate'),
                             'original_estimate_seconds': issue.get('original_estimate_seconds'),
-                            'restore_if_archived': True,
                         })
                 
             except Exception as e:

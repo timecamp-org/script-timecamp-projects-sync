@@ -65,10 +65,14 @@ consumed by `sync_projects.py`:
 ]
 ```
 
-`restore_if_archived` is optional. When it is `true` and the `archive` sync
-action is enabled, a source task that already exists as archived in TimeCamp is
-restored. Jira fetches set this marker automatically. Sources that omit it keep
-the previous behavior, so the sync does not override manual archiving.
+`restore_if_archived` is optional and defaults to `true`. When the `archive`
+sync action is enabled, the sync archives TimeCamp tasks that are missing from
+the source data and restores archived TimeCamp tasks that are present in it
+again. For example, an item that goes to Done is archived, and it comes back
+when it moves back to an active status. Set `restore_if_archived` to `false` on
+a task to keep it archived when someone archived it manually in TimeCamp while
+it is still active in the source. If TimeCamp has an active and an archived
+task with the same external ID, the sync uses the active task.
 
 `custom_fields` maps TimeCamp custom field template ids to values. During sync
 the engine assigns each value with

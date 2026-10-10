@@ -223,6 +223,29 @@ class TimeCampClientTest(unittest.TestCase):
             ],
         )
 
+    def test_get_tasks_requests_archived_tasks_only_when_asked(self):
+        calls = []
+
+        class FakeClient(TimeCampClient):
+            def __init__(self):
+                pass
+
+            def _request(self, method, endpoint, json=None, params=None):
+                calls.append((method, endpoint, params))
+                return {"1": {"task_id": 1}}
+
+        client = FakeClient()
+
+        self.assertEqual(client.get_tasks(), [{"task_id": 1}])
+        self.assertEqual(client.get_tasks(include_archived=True), [{"task_id": 1}])
+        self.assertEqual(
+            calls,
+            [
+                ("GET", "tasks", None),
+                ("GET", "tasks", {"status": "all"}),
+            ],
+        )
+
     def test_archive_and_restore_task_send_explicit_status(self):
         calls = []
 

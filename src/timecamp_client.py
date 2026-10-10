@@ -127,8 +127,10 @@ class TimeCampClient:
             "seconds": dict(self._api_request_seconds),
         }
 
-    def get_tasks(self) -> List[Dict[str, Any]]:
-        data = self._request("GET", "tasks")
+    def get_tasks(self, include_archived: bool = False) -> List[Dict[str, Any]]:
+        # Without status=all the API silently omits archived tasks.
+        params = {"status": "all"} if include_archived else None
+        data = self._request("GET", "tasks", params=params)
 
         if isinstance(data, dict):
             return list(data.values())

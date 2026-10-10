@@ -348,7 +348,6 @@ class JiraFetcherTest(unittest.TestCase):
         issue = next(item for item in data if item["task_id"].endswith("_TCD-123"))
         self.assertEqual(issue["original_estimate"], "2h")
         self.assertEqual(issue["original_estimate_seconds"], 7200)
-        self.assertTrue(issue["restore_if_archived"])
         client.get_issues_for_project.assert_called_once_with(
             "TCD",
             archiving_delay_days=14,
