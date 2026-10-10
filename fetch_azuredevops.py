@@ -1,3 +1,4 @@
+import hashlib
 import os
 import json
 from datetime import datetime
@@ -5,11 +6,23 @@ from typing import Dict, List, Any, Optional
 from dotenv import load_dotenv
 from azure.devops.connection import Connection
 from msrest.authentication import BasicAuthentication
-from azure.devops.v7_1.work_item_tracking import WorkItemTrackingClient
-from azure.devops.v7_1.core import CoreClient
 
 # Load environment variables
 load_dotenv(override=True)
+
+
+def generate_azure_devops_org_id(url: str) -> str:
+    """Return the stable organization id used in TimeCamp external task ids.
+
+    Every Azure DevOps task id starts with this id, and sync_projects.py finds
+    TimeCamp tasks by it. Do not use hash() here: Python changes it in each
+    process. If this result changes, the next sync archives all synced Azure
+    DevOps tasks and creates them again.
+    """
+    normalized_url = url.strip().rstrip('/').lower()
+    hash_value = int(hashlib.md5(normalized_url.encode()).hexdigest()[:6], 16)
+    return f"org_{hash_value % 1000000}"
+
 
 class AzureDevOpsClient:
     """Client for interacting with Azure DevOps API"""
@@ -252,11 +265,12 @@ class AzureDevOpsFetcher:
         instances_config = os.getenv('AZUREDEVOPS_INSTANCES')
         if instances_config:
             for instance_config in instances_config.split(','):
-                parts = instance_config.strip().split(':')
-                if len(parts) >= 3:
-                    name = parts[0]
-                    url = parts[1]
-                    token = ':'.join(parts[2:])  # In case token contains colons
+                # The URL contains colons (https://, port), so the name ends at
+                # the first colon and the token starts after the last colon.
+                name, _, url_and_token = instance_config.strip().partition(':')
+                url, _, token = url_and_token.rpartition(':')
+                name, url, token = name.strip(), url.strip(), token.strip()
+                if name and url and token:
                     instances.append({
                         'name': name,
                         'url': url,
@@ -310,7 +324,7 @@ class AzureDevOpsFetcher:
                 
                 # Add organization as top-level item
                 org_name = instance_config['name']
-                org_id = f"org_{hash(instance_config['url']) % 1000000}"  # Generate unique org ID
+                org_id = generate_azure_devops_org_id(instance_config['url'])
                 
                 flattened_data.append({
                     'name': org_name,
@@ -427,7 +441,7 @@ def main():
     boards = len([item for item in data if str(item['parent_id']).startswith('org_') and len(str(item['parent_id']).split('_')) == 2])
     work_items = total_items - organizations - boards
     
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  Total items: {total_items}")
     print(f"  Organizations: {organizations}")
     print(f"  Boards/Projects: {boards}")
@@ -435,7 +449,7 @@ def main():
     
     # Show structure preview
     if data:
-        print(f"\nStructure preview:")
+        print("\nStructure preview:")
         for i, item in enumerate(data[:15]):
             # Determine indentation based on hierarchy level
             if item['parent_id'] == 0:
