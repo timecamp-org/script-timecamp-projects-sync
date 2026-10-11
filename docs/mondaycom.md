@@ -22,6 +22,12 @@ MONDAY_MEANDATORY_TAGS=Client
 Optional config:
 
 ```bash
+# Status column (title or id) that marks Monday items as done. Done items are
+# not exported. The first column found on each board is used. Without it, the
+# script uses the column with id "status", then the first status column with
+# done labels. Check the "Done status column for ..." lines in the fetch log.
+MONDAY_DONE_STATUS_COLUMNS=Execution Status,Execution Stage
+
 # Run only selected sync steps. Default is all actions.
 TIMECAMP_SYNC_ACTIONS=tasks,names,estimates,archive,tags,mandatory_tags,users
 

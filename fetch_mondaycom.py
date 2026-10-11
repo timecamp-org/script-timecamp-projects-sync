@@ -1,8 +1,9 @@
 import argparse
 import json
 import os
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Set
 
 import requests
 from dotenv import load_dotenv
@@ -15,6 +16,7 @@ MONDAY_API_URL = "https://api.monday.com/v2"
 MONDAY_API_VERSION = "2023-10"
 MONDAY_DEFAULT_ITEM_LIMIT = 100
 MONDAY_DEFAULT_DONE_STATUS_INDEX = 1
+MONDAY_DEFAULT_STATUS_COLUMN_ID = "status"
 MONDAY_FIELD_TYPE_STATUS = "status"
 MONDAY_FIELD_TYPE_SUBTASKS = "subtasks"
 MONDAY_FIELD_TYPE_PEOPLE = "people"
@@ -22,6 +24,15 @@ MONDAY_BOARD_TYPE_SUBITEM_BOARD = "sub_items_board"
 MONDAY_INTEGRATION_TASK_PREFIX = "monday_"
 MONDAY_MANDATORY_TAGS_OUTPUT_KEY = "meandatory_tags"
 MONDAY_ASSIGNED_USERS_OUTPUT_KEY = "assigned_users"
+
+
+@dataclass(frozen=True)
+class DoneStatusColumn:
+    """Status column that tells if an item on a board is done."""
+
+    column_id: str
+    title: str
+    done_statuses: FrozenSet[int]
 
 
 class MondayClient:
@@ -332,6 +343,7 @@ class MondayFetcher:
         include_archived_groups: bool = False,
         mandatory_tag_columns: Optional[List[str]] = None,
         ignored_user_assigned_board_ids: Optional[Iterable[str]] = None,
+        done_status_columns: Optional[Iterable[str]] = None,
     ):
         api_token = os.getenv("MONDAY_API_TOKEN")
         if not api_token:
@@ -348,7 +360,12 @@ class MondayFetcher:
             else load_ignored_user_assigned_board_ids_from_env()
         )
         self._assignment_ignored_board_ids = set(self.ignored_user_assigned_board_ids)
-        self.boards_done_statuses: Dict[str, Set[int]] = {}
+        self.done_status_columns = list(
+            done_status_columns
+            if done_status_columns is not None
+            else load_done_status_columns_from_env()
+        )
+        self.boards_done_columns: Dict[str, Optional[DoneStatusColumn]] = {}
         self.users_by_id: Dict[str, Dict[str, str]] = {}
 
     def fetch_all_data(self) -> List[Dict[str, Any]]:
@@ -381,7 +398,7 @@ class MondayFetcher:
                 "  Skipping user assignments for "
                 f"{len(self.ignored_user_assigned_board_ids)} configured board(s)"
             )
-        self._fetch_boards_done_statuses(boards)
+        self._fetch_boards_done_columns(boards)
 
         for board in boards:
             if board.get("type") == MONDAY_BOARD_TYPE_SUBITEM_BOARD:
@@ -406,7 +423,7 @@ class MondayFetcher:
                 sorted(subitem_board_ids),
                 skip_subscribers_for_board_ids=self._assignment_ignored_board_ids,
             )
-            self._fetch_boards_done_statuses(subitem_boards)
+            self._fetch_boards_done_columns(subitem_boards)
 
             for board in subitem_boards:
                 for subitem_task in self._iterate_items(board):
@@ -427,13 +444,13 @@ class MondayFetcher:
             }
 
     def _iterate_items(self, board: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
-        done_statuses = self.boards_done_statuses.get(str(board["id"]), {MONDAY_DEFAULT_DONE_STATUS_INDEX})
+        done_column = self.boards_done_columns.get(str(board["id"]))
 
         for item in (board.get("items_page") or {}).get("items", []):
             if self._is_subitem_without_parent(board, item):
                 continue
 
-            if self._is_item_done(item, done_statuses) and not self.include_done:
+            if self._is_item_done(item, done_column) and not self.include_done:
                 continue
 
             parent_item = item.get("parent_item")
@@ -478,10 +495,19 @@ class MondayFetcher:
 
         return subitem_board_ids
 
-    def _fetch_boards_done_statuses(self, boards: List[Dict[str, Any]]) -> None:
+    def _fetch_boards_done_columns(self, boards: List[Dict[str, Any]]) -> None:
         for board in boards:
-            board_id = str(board["id"])
-            self.boards_done_statuses[board_id] = get_done_statuses_for_board(board)
+            done_column = get_done_status_column(board, self.done_status_columns)
+            self.boards_done_columns[str(board["id"])] = done_column
+
+            board_name = board.get("name") or f"Board {board['id']}"
+            if done_column:
+                print(
+                    f"  Done status column for {board_name}: "
+                    f"{done_column.title} ({done_column.column_id})"
+                )
+            else:
+                print(f"  No done status column for {board_name}; keeping all items")
 
     def _fetch_users(self) -> None:
         try:
@@ -516,18 +542,25 @@ class MondayFetcher:
             and not item.get("parent_item")
         )
 
-    def _is_item_done(self, item: Dict[str, Any], done_statuses: Set[int]) -> bool:
-        value = get_settings(
-            item.get("column_values", []),
-            MONDAY_FIELD_TYPE_STATUS,
-            "value",
-        )
-        status_index = value.get("index")
-
-        if status_index is None:
+    def _is_item_done(
+        self,
+        item: Dict[str, Any],
+        done_column: Optional[DoneStatusColumn],
+    ) -> bool:
+        if done_column is None:
             return False
 
-        return int(status_index) in done_statuses
+        for column_value in item.get("column_values", []):
+            if str(column_value.get("id")) != done_column.column_id:
+                continue
+
+            status_index = parse_json_object(column_value.get("value")).get("index")
+            if status_index is None:
+                return False
+
+            return int(status_index) in done_column.done_statuses
+
+        return False
 
     def _get_mandatory_tags(self, board: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, List[str]]:
         if not self.mandatory_tag_columns:
@@ -578,36 +611,82 @@ class MondayFetcher:
         return filename
 
 
-def get_done_statuses_for_board(board: Dict[str, Any]) -> Set[int]:
-    settings = get_settings(
-        board.get("columns", []),
-        MONDAY_FIELD_TYPE_STATUS,
-        "settings_str",
-    )
-    done_colors = settings.get("done_colors")
+def get_done_status_column(
+    board: Dict[str, Any],
+    configured_columns: Optional[Iterable[str]] = None,
+) -> Optional[DoneStatusColumn]:
+    """Return the status column that tells if an item on the board is done.
+
+    A board can have more status columns (e.g. "Effort Size") before the real
+    item status, so the first status column is not always correct. Priority:
+    configured columns (title or id), the default Monday column with id
+    "status", then the first status column with done labels.
+    """
+    status_columns = [
+        column
+        for column in board.get("columns", [])
+        if column.get("type") == MONDAY_FIELD_TYPE_STATUS
+    ]
+
+    for configured_column in configured_columns or []:
+        for column in status_columns:
+            if is_column_match(column, configured_column):
+                return create_done_status_column(column)
+
+    for column in status_columns:
+        if str(column.get("id")) == MONDAY_DEFAULT_STATUS_COLUMN_ID:
+            return create_done_status_column(column)
+
+    for column in status_columns:
+        if get_column_done_colors(column):
+            return create_done_status_column(column)
+
+    return None
+
+
+def create_done_status_column(column: Dict[str, Any]) -> DoneStatusColumn:
+    done_colors = get_column_done_colors(column)
     if done_colors is None:
         done_colors = [MONDAY_DEFAULT_DONE_STATUS_INDEX]
 
-    return {int(status_index) for status_index in done_colors}
+    return DoneStatusColumn(
+        column_id=str(column.get("id")),
+        title=str(column.get("title") or column.get("id")),
+        done_statuses=frozenset(int(status_index) for status_index in done_colors),
+    )
+
+
+def get_column_done_colors(column: Dict[str, Any]) -> Optional[List[Any]]:
+    done_colors = parse_json_object(column.get("settings_str")).get("done_colors")
+    return done_colors if isinstance(done_colors, list) else None
+
+
+def is_column_match(column: Dict[str, Any], column_name: str) -> bool:
+    normalized_name = column_name.strip().lower()
+    return normalized_name in {
+        str(column.get("id") or "").strip().lower(),
+        str(column.get("title") or "").strip().lower(),
+    }
 
 
 def get_settings(items: List[Dict[str, Any]], field_type: str, value_key: str) -> Dict[str, Any]:
     for item in items:
-        if item.get("type") != field_type:
-            continue
-
-        raw_settings = item.get(value_key)
-        if not raw_settings:
-            return {}
-
-        try:
-            decoded = json.loads(raw_settings)
-        except (TypeError, json.JSONDecodeError):
-            return {}
-
-        return decoded if isinstance(decoded, dict) else {}
+        if item.get("type") == field_type:
+            return parse_json_object(item.get(value_key))
 
     return {}
+
+
+def parse_json_object(raw_value: Optional[str]) -> Dict[str, Any]:
+    if not raw_value:
+        return {}
+
+    try:
+        decoded = json.loads(raw_value)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+
+    return decoded if isinstance(decoded, dict) else {}
 
 
 def board_external_id(board_id: str) -> str:
@@ -707,6 +786,15 @@ def expand_ignored_user_assigned_board_ids(
 
 def load_mandatory_tag_columns_from_env() -> List[str]:
     columns = os.getenv("MONDAY_MEANDATORY_TAGS") or os.getenv("MONDAY_MANDATORY_TAGS", "")
+    return [
+        column.strip()
+        for column in columns.split(",")
+        if column.strip()
+    ]
+
+
+def load_done_status_columns_from_env() -> List[str]:
+    columns = os.getenv("MONDAY_DONE_STATUS_COLUMNS", "")
     return [
         column.strip()
         for column in columns.split(",")
