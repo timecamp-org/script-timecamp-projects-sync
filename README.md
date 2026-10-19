@@ -293,7 +293,7 @@ uv run --env-file .env --with-requirements requirements.txt python helpers/assig
 # Batch assign users to all root level tasks
 uv run --env-file .env --with-requirements requirements.txt python helpers/assign_users_to_task.py --user-ids 364263,364264
 
-# Remove all direct user assignments from selected tasks and every descendant
+# Remove all direct user assignments from active tasks in selected task trees
 uv run --env-file .env --with-requirements requirements.txt python helpers/unassign_users_from_tasks.py --task_ids 34523534,34523535 --dry-run
 uv run --env-file .env --with-requirements requirements.txt python helpers/unassign_users_from_tasks.py --task_ids 34523534,34523535
 
@@ -304,10 +304,12 @@ uv run --env-file .env --with-requirements requirements.txt python helpers/assig
 
 The unassignment helper requires `TIMECAMP_API_TOKEN` and accepts `--task-ids`
 as an alias for `--task_ids`. It fetches the complete task tree and its user
-assignments once, including archived tasks, and builds the entire removal plan
-before writing. Overlapping task IDs are processed once. An iterative traversal
-handles thousands of tasks without recursion, and children are processed before
-parents to preserve access while removing assignments. Requests reuse a connection
+assignments once, including archived tasks to preserve the hierarchy. Archived
+tasks are reported and skipped; their active descendants are still processed.
+It builds the entire removal plan before writing. Overlapping task IDs are
+processed once. Iterative traversal handles thousands of tasks without recursion,
+and children are processed before parents to preserve access while removing
+assignments. Requests reuse a connection
 and retry rate limits and temporary server errors up to five times, respecting
 `Retry-After`. Progress is printed after each task. On failure the helper stops;
 rerun it to fetch and remove the remaining assignments.

@@ -24,8 +24,8 @@ def parse_task_ids(value: str) -> List[int]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Unassign all directly assigned users from selected TimeCamp tasks "
-            "and all their subtasks, including archived tasks. "
+            "Unassign all directly assigned users from active TimeCamp tasks "
+            "in the selected task trees. Archived tasks are skipped. "
             "Collect all assignments before making any changes."
         )
     )
@@ -121,6 +121,13 @@ def task_user_ids(task: Dict[str, Any]) -> List[int]:
     return sorted(user_ids)
 
 
+def is_archived(task: Dict[str, Any]) -> bool:
+    archived = task.get("archived")
+    if isinstance(archived, str):
+        return archived.strip().lower() in {"1", "true", "yes"}
+    return bool(archived)
+
+
 def build_unassignment_plan(
     tasks: List[Dict[str, Any]], task_ids: List[int]
 ) -> List[Tuple[int, List[int]]]:
@@ -143,7 +150,11 @@ def build_unassignment_plan(
         while stack:
             task_id, exiting = stack.pop()
             if exiting:
-                plan.append((task_id, task_user_ids(tasks_by_id[task_id])))
+                task = tasks_by_id[task_id]
+                if is_archived(task):
+                    print(f"  Task {task_id}: skipping archived task.", flush=True)
+                else:
+                    plan.append((task_id, task_user_ids(task)))
                 state[task_id] = "done"
                 continue
             if state.get(task_id) == "done":

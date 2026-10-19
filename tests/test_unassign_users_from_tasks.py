@@ -43,7 +43,7 @@ class UnassignUsersTest(unittest.TestCase):
         tasks = [
             task(1, users={"10": {"user_id": "10", "role_id": "3"}}),
             task(2, 1, users=[{"userId": 20}, {"userId": 20}]),
-            task(3, 2, users={"30": {"role_id": 3}}, archived=1),
+            task(3, 2, users={"30": {"role_id": 3}}, archived=0),
             task(4),
             task(5, 4, users={"50": {"user_id": 50}}),
         ]
@@ -53,6 +53,44 @@ class UnassignUsersTest(unittest.TestCase):
                     build_unassignment_plan(tasks, selected),
                     [(3, [30]), (2, [20]), (1, [10])],
                 )
+
+    def test_skips_archived_tasks_without_blocking_active_descendants_or_siblings(self):
+        for archived in (1, "1", True, "true", "YES"):
+            with self.subTest(archived=archived):
+                client = Mock()
+                client.get_tasks.return_value = [
+                    task(1, users={"10": {}}),
+                    task(2, 1, users={"20": {}}, archived=archived),
+                    task(3, 2, users={"30": {}}, archived="0"),
+                    task(4, 1, users={"40": {}}, archived=0),
+                ]
+
+                def unassign(task_id, user_ids):
+                    if task_id == 2:
+                        raise RuntimeError("403 Forbidden: archived task")
+
+                client.unassign_users_from_task.side_effect = unassign
+                with redirect_stdout(io.StringIO()) as output:
+                    result = unassign_users(client, [1, 2], dry_run=False)
+                self.assertEqual(result, 0)
+                self.assertEqual(
+                    [call.args for call in client.unassign_users_from_task.call_args_list],
+                    [(3, [30]), (4, [40]), (1, [10])],
+                )
+                self.assertIn("Task 2: skipping archived task", output.getvalue())
+                self.assertIn("Removed 3 user assignment(s)", output.getvalue())
+
+    def test_archived_root_without_users_is_skipped_in_dry_run(self):
+        client = Mock()
+        archived_task = task(1, archived="1")
+        del archived_task["users"]
+        client.get_tasks.return_value = [archived_task, task(2, 1, users={"20": {}})]
+        with redirect_stdout(io.StringIO()) as output:
+            result = unassign_users(client, [1], dry_run=True)
+        self.assertEqual(result, 0)
+        self.assertIn("Task 1: skipping archived task", output.getvalue())
+        self.assertIn("Task 2: would unassign [20]", output.getvalue())
+        client.unassign_users_from_task.assert_not_called()
 
     def test_handles_thousands_of_wide_and_deep_tasks_without_recursion(self):
         for deep in (False, True):
