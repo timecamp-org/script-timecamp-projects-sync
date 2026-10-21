@@ -11,6 +11,15 @@ from src.mandatory_tags import MandatoryTagSyncResult, TagDefinition
 
 
 class SyncProjectsCliTest(unittest.TestCase):
+    def setUp(self):
+        self.timecamp_task_id_patcher = patch.object(
+            sync_projects,
+            "TIMECAMP_TASK_ID",
+            None,
+        )
+        self.timecamp_task_id_patcher.start()
+        self.addCleanup(self.timecamp_task_id_patcher.stop)
+
     def test_main_uses_input_file_for_preview_and_sync(self):
         with (
             patch.object(sync_projects, "TIMECAMP_API_TOKEN", "token"),
@@ -397,6 +406,7 @@ class SyncProjectsCliTest(unittest.TestCase):
 
         with (
             patch.object(sync_projects, "TIMECAMP_API_TOKEN", "token"),
+            patch.object(sync_projects, "TIMECAMP_TASK_ID", None),
             patch.object(sync_projects, "load_tasks_from_json", return_value=[source_task]),
             patch.object(sync_projects, "TimeCampClient", return_value=client),
         ):
@@ -407,6 +417,58 @@ class SyncProjectsCliTest(unittest.TestCase):
             )
 
         self.assertEqual(client.created_names, ["New  task  name"])
+
+    def test_new_task_sends_source_description_as_timecamp_note(self):
+        class FakeClient:
+            def __init__(self):
+                self.created_task_kwargs = []
+
+            def get_tasks(self, include_archived=False):
+                return []
+
+            def get_api_metrics_snapshot(self):
+                return {"counts": {}, "seconds": {}}
+
+            def create_task(self, **kwargs):
+                self.created_task_kwargs.append(kwargs)
+                return {
+                    "task_id": 201,
+                    "external_task_id": kwargs["external_task_id"],
+                    "name": kwargs["name"],
+                }
+
+        source_task = {
+            "task_id": "clickup_1",
+            "external_task_id": "clickup_1",
+            "parent_id": 0,
+            "name": "ClickUp project",
+            "description": "ClickUp custom fields:\nClient: Acme",
+        }
+        client = FakeClient()
+
+        with (
+            patch.object(sync_projects, "TIMECAMP_API_TOKEN", "token"),
+            patch.object(sync_projects, "TIMECAMP_TASK_ID", None),
+            patch.object(sync_projects, "load_tasks_from_json", return_value=[source_task]),
+            patch.object(sync_projects, "TimeCampClient", return_value=client),
+        ):
+            sync_projects.sync_hierarchical_tasks_to_timecamp(
+                {"tasks"},
+                "tasks.json",
+                False,
+            )
+
+        self.assertEqual(
+            client.created_task_kwargs,
+            [
+                {
+                    "name": "ClickUp project",
+                    "parent_id": 0,
+                    "external_task_id": "clickup_1",
+                    "note": "ClickUp custom fields:\nClient: Acme",
+                }
+            ],
+        )
 
     def test_new_task_gets_source_estimate_after_creation(self):
         class FakeClient:
@@ -562,6 +624,73 @@ class SyncProjectsCliTest(unittest.TestCase):
         self.assertEqual(client.restored_task_ids, [201])
         self.assertIn("- Restore candidates: 1", output.getvalue())
         self.assertIn("- Restored: 1 source tasks", output.getvalue())
+
+    def test_archives_clickup_task_missing_from_source(self):
+        class FakeClient:
+            def __init__(self):
+                self.archived_task_ids = []
+
+            def get_tasks(self, include_archived=False):
+                return [
+                    {
+                        "task_id": 201,
+                        "external_task_id": "clickup_current",
+                        "name": "Current ClickUp project",
+                        "parent_id": 900,
+                        "archived": 0,
+                    },
+                    {
+                        "task_id": 202,
+                        "external_task_id": "clickup_completed",
+                        "name": "Completed ClickUp project",
+                        "parent_id": 900,
+                        "archived": 0,
+                    },
+                    {
+                        "task_id": 203,
+                        "external_task_id": "clickup_outside_tree",
+                        "name": "ClickUp project outside configured tree",
+                        "parent_id": 901,
+                        "archived": 0,
+                    },
+                ]
+
+            def get_api_metrics_snapshot(self):
+                return {"counts": {}, "seconds": {}}
+
+            def archive_task(self, task_id):
+                self.archived_task_ids.append(task_id)
+                return {"task_id": task_id, "archived": 1}
+
+        source_task = {
+            "task_id": "clickup_current",
+            "external_task_id": "clickup_current",
+            "parent_id": 0,
+            "name": "Current ClickUp project",
+        }
+        client = FakeClient()
+
+        with (
+            patch.object(sync_projects, "TIMECAMP_API_TOKEN", "token"),
+            patch.object(sync_projects, "TIMECAMP_TASK_ID", "900"),
+            patch.object(sync_projects, "load_tasks_from_json", return_value=[source_task]),
+            patch.object(sync_projects, "TimeCampClient", return_value=client),
+        ):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                sync_projects.sync_hierarchical_tasks_to_timecamp(
+                    {"archive"},
+                    "tasks.json",
+                    False,
+                )
+
+        self.assertEqual(client.archived_task_ids, [202])
+        self.assertIn(
+            "TimeCamp task scope: 2 descendant task(s) under parent 900",
+            output.getvalue(),
+        )
+        self.assertIn("- Archive candidates: 1", output.getvalue())
+        self.assertIn("- Archived: 1 obsolete tasks", output.getvalue())
 
     def test_returning_source_task_is_not_restored_without_archive_action(self):
         class FakeClient:

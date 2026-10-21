@@ -1,3 +1,4 @@
+import os
 import re
 from time import perf_counter
 from typing import Any, Dict, List, Optional
@@ -8,6 +9,14 @@ import requests
 TIMECAMP_API_BASE_URL = "https://app.timecamp.com/third_party/api"
 TIMECAMP_INTERNAL_API_BASE_URL = "https://app.timecamp.com/internal/api"
 TIMECAMP_TASK_NAME_MAX_LENGTH = 190
+
+
+def normalize_timecamp_domain(domain: Optional[str]) -> str:
+    """Return a TimeCamp account domain as an HTTPS base URL."""
+    normalized = str(domain or "app.timecamp.com").strip().rstrip("/")
+    if not normalized.startswith(("http://", "https://")):
+        normalized = f"https://{normalized}"
+    return normalized
 
 
 def normalize_timecamp_task_name(name: Any) -> str:
@@ -39,11 +48,16 @@ class TimeCampClient:
     def __init__(
         self,
         api_token: str,
-        base_url: str = TIMECAMP_API_BASE_URL,
-        internal_base_url: str = TIMECAMP_INTERNAL_API_BASE_URL,
+        base_url: Optional[str] = None,
+        internal_base_url: Optional[str] = None,
     ):
-        self.base_url = base_url.rstrip("/")
-        self.internal_base_url = internal_base_url.rstrip("/")
+        domain = normalize_timecamp_domain(os.getenv("TIMECAMP_DOMAIN"))
+        self.base_url = (
+            base_url or f"{domain}/third_party/api"
+        ).rstrip("/")
+        self.internal_base_url = (
+            internal_base_url or f"{domain}/internal/api"
+        ).rstrip("/")
         self._api_request_counts: Dict[str, int] = {}
         self._api_request_seconds: Dict[str, float] = {}
         self.session = requests.Session()
@@ -165,6 +179,7 @@ class TimeCampClient:
         name: str,
         parent_id: int,
         external_task_id: str,
+        note: Optional[str] = None,
     ) -> Dict[str, Any]:
         task_name = normalize_timecamp_task_name(name)
         if not task_name:
@@ -175,6 +190,8 @@ class TimeCampClient:
             "parent_id": int(parent_id),
             "external_task_id": external_task_id,
         }
+        if note is not None:
+            data["note"] = str(note)
         response_data = self._request("POST", "tasks", json=data)
 
         if isinstance(response_data, dict) and len(response_data) == 1:
