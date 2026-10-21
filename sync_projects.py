@@ -501,6 +501,50 @@ def get_timecamp_parent_task_id():
         return 0
     return TIMECAMP_TASK_ID
 
+
+def get_timecamp_task_tree_entries(timecamp_entries, parent_task_id):
+    """Return only descendants of the configured TimeCamp parent task."""
+    entries = list(timecamp_entries)
+    normalized_parent_id = str(parent_task_id or "").strip()
+    if not normalized_parent_id or normalized_parent_id == "0":
+        return entries
+
+    children_by_parent = {}
+    for entry in entries:
+        parent_id = entry.get("parent_id")
+        if parent_id is None:
+            continue
+        children_by_parent.setdefault(str(parent_id), []).append(entry)
+
+    descendant_ids = set()
+    pending_parent_ids = [normalized_parent_id]
+    while pending_parent_ids:
+        current_parent_id = pending_parent_ids.pop()
+        for child in children_by_parent.get(current_parent_id, []):
+            child_id = child.get("task_id")
+            if child_id is None:
+                continue
+            normalized_child_id = str(child_id)
+            if normalized_child_id in descendant_ids:
+                continue
+            descendant_ids.add(normalized_child_id)
+            pending_parent_ids.append(normalized_child_id)
+
+    return [
+        entry
+        for entry in entries
+        if str(entry.get("task_id")) in descendant_ids
+    ]
+
+
+def get_source_task_description(task):
+    """Return an optional source description to store as the TimeCamp note."""
+    description = task.get("description")
+    if description is None:
+        return None
+    return str(description)
+
+
 def get_source_external_task_id(task):
     """Return the TimeCamp external_task_id for a source task."""
     if task.get('external_task_id'):
@@ -554,6 +598,16 @@ def sync_hierarchical_tasks_to_timecamp(
     # Archived tasks are needed to restore returning source tasks instead of
     # creating duplicates.
     timecamp_entries = client.get_tasks(include_archived=True)
+    timecamp_parent_task_id = get_timecamp_parent_task_id()
+    timecamp_entries = get_timecamp_task_tree_entries(
+        timecamp_entries,
+        timecamp_parent_task_id,
+    )
+    if timecamp_parent_task_id:
+        print(
+            f"TimeCamp task scope: {len(timecamp_entries)} descendant task(s) "
+            f"under parent {timecamp_parent_task_id}"
+        )
 
     # Ensure all mandatory tag lists/tags exist before tasks are assigned to them.
     mandatory_tag_sync = None
@@ -586,7 +640,8 @@ def sync_hierarchical_tasks_to_timecamp(
     for entry in timecamp_entries:
         external_id = entry.get('external_task_id')
         if external_id and (
-            external_id.startswith('sync_') or external_id in source_external_ids
+            external_id.startswith(('sync_', 'clickup_'))
+            or external_id in source_external_ids
         ):
             current_entry = timecamp_tasks_map.get(external_id)
             # Prefer an active duplicate so restore never revives a stale copy.
@@ -816,10 +871,16 @@ def sync_hierarchical_tasks_to_timecamp(
             
             try:
                 timecamp_name = normalize_timecamp_task_name(task["name"])
+                create_task_kwargs = {
+                    "name": timecamp_name,
+                    "parent_id": parent_timecamp_id,
+                    "external_task_id": external_id,
+                }
+                description = get_source_task_description(task)
+                if description is not None:
+                    create_task_kwargs["note"] = description
                 new_task = client.create_task(
-                    name=timecamp_name,
-                    parent_id=parent_timecamp_id,
-                    external_task_id=external_id
+                    **create_task_kwargs
                 )
                 source_to_timecamp_map[task['task_id']] = new_task['task_id']
                 new_task.setdefault("users", {})

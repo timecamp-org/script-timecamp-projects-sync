@@ -1,4 +1,6 @@
+import os
 import unittest
+from unittest.mock import patch
 
 from src.timecamp_client import TimeCampClient, normalize_timecamp_task_name
 
@@ -14,6 +16,63 @@ class TimeCampClientTest(unittest.TestCase):
 
     def test_normalize_timecamp_task_name_handles_none(self):
         self.assertEqual(normalize_timecamp_task_name(None), "")
+
+    def test_uses_timecamp_domain_from_environment(self):
+        with patch.dict(
+            os.environ,
+            {"TIMECAMP_DOMAIN": "ue2.timecamp.com"},
+        ):
+            client = TimeCampClient("token")
+
+        self.assertEqual(
+            client.base_url,
+            "https://ue2.timecamp.com/third_party/api",
+        )
+        self.assertEqual(
+            client.internal_base_url,
+            "https://ue2.timecamp.com/internal/api",
+        )
+
+    def test_create_task_sends_description_as_note(self):
+        calls = []
+
+        class FakeClient(TimeCampClient):
+            def __init__(self):
+                pass
+
+            def _request(self, method, endpoint, json=None, params=None):
+                calls.append((method, endpoint, json))
+                return {
+                    "123": {
+                        "task_id": 123,
+                        "name": json["name"],
+                        "note": json.get("note"),
+                    }
+                }
+
+        task = FakeClient().create_task(
+            name="Project",
+            parent_id=0,
+            external_task_id="clickup_1",
+            note="Client: Acme",
+        )
+
+        self.assertEqual(task["note"], "Client: Acme")
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "POST",
+                    "tasks",
+                    {
+                        "name": "Project",
+                        "parent_id": 0,
+                        "external_task_id": "clickup_1",
+                        "note": "Client: Acme",
+                    },
+                )
+            ],
+        )
 
     def test_request_records_api_metrics_with_normalized_endpoint(self):
         class FakeResponse:

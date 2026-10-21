@@ -45,6 +45,7 @@ consumed by `sync_projects.py`:
     "name": "Build reporting dashboard",
     "task_id": "project_42",
     "parent_id": "client_acme",
+    "description": "Optional description stored as the TimeCamp task note on creation",
     "restore_if_archived": true,
     "original_estimate_seconds": 7200,
     "mandatory_tags": {
@@ -77,6 +78,36 @@ task with the same external ID, the sync uses the active task.
 `custom_fields` maps TimeCamp custom field template ids to values. During sync
 the engine assigns each value with
 `POST /v3/custom-fields/{template_id}/assign/{task_id}`.
+
+`description` is optional. When a missing task is created, its value is sent
+to TimeCamp as the task `note`.
+
+Set `TIMECAMP_TASK_ID` to import tasks below a specific TimeCamp parent. When
+configured, existing-task matching, updates, restoration, and archiving are
+restricted to that parent's complete descendant tree. Tasks outside that tree
+are not modified, even if they have a matching external ID prefix.
+
+### ClickUp → TimeCamp Synchronization
+
+Configure `CLICKUP_OAUTH_ACCESS_TOKEN` and the ClickUp hierarchy in `.env`.
+`CLICKUP_WORKSPACE_NAME` is required. By default, the remaining path is
+`Research Hub / Research Projects / Client / Revenue Projects`
+(the last segment is the ClickUp List named `Client / Revenue Projects`).
+Tasks directly in that List become a flat set of TimeCamp projects; ClickUp
+subtasks are omitted. Optionally set `CLICKUP_DESCRIPTION_CUSTOM_FIELDS` to a
+comma-separated list of exact custom-field names or IDs. There is no limit on
+the number of configured fields. Their values are copied into each newly
+created TimeCamp project's description; without this variable, no custom
+fields are added to the description.
+
+```dotenv
+CLICKUP_DESCRIPTION_CUSTOM_FIELDS=Client code,Revenue type,custom_field_id
+```
+
+```bash
+python3 fetch_clickup.py --output tasks.json
+python3 sync_projects.py --input tasks.json
+```
 
 ### Harvest ↔ TimeCamp Synchronization
 
