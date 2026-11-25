@@ -36,9 +36,9 @@ def parse_args() -> argparse.Namespace:
         description="Assign one or more users to TimeCamp tasks.",
         epilog=(
             "Examples:\n"
-            "  python3 helpers/assign_users_to_task.py --user-ids 364263,364264\n"
-            "  python3 helpers/assign_users_to_task.py --task-ids 34523534,34523535 --user-ids 364263\n"
-            "  python3 helpers/assign_users_to_task.py --task-ids 34523534 --user-ids 364263 --role-id 3"
+            "  python3 helpers/assign_users_to_task.py --user-ids 2001,2002\n"
+            "  python3 helpers/assign_users_to_task.py --task-ids 1001,1002 --user-ids 2001\n"
+            "  python3 helpers/assign_users_to_task.py --task-ids 1001 --user-ids 2001 --role-id 3"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
         "--user-ids",
         required=True,
         type=parse_comma_separated_ints,
-        help="Comma-separated TimeCamp user IDs, e.g. 364263,364264.",
+        help="Comma-separated TimeCamp user IDs, e.g. 2001,2002.",
     )
     parser.add_argument(
         "--role-id",

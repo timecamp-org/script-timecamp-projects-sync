@@ -42,7 +42,7 @@ class CustomFieldsTest(unittest.TestCase):
             timecamp_task_id=123,
             source_task={
                 "custom_fields": {
-                    "456": "W-2",
+                    "456": "Fixed price",
                     "789": "Client",
                 }
             },
@@ -52,7 +52,7 @@ class CustomFieldsTest(unittest.TestCase):
         self.assertEqual(
             calls,
             [
-                (123, "456", "W-2"),
+                (123, "456", "Fixed price"),
                 (123, "789", "Client"),
             ],
         )

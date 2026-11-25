@@ -1000,15 +1000,15 @@ class JiraExportStateTest(unittest.TestCase):
                 "--env-file",
                 "/tmp/export.env",
                 "--user-email",
-                "Ezee+Jira@PhreeTech.com",
+                "Person+Jira@Example.com",
             ]
         )
 
         self.assertEqual(args.env_file, "/tmp/export.env")
-        self.assertEqual(args.user_email, "Ezee+Jira@PhreeTech.com")
+        self.assertEqual(args.user_email, "Person+Jira@Example.com")
         self.assertEqual(
             filtered_state_file(args.user_email),
-            "data/jira_time_entries_state.ezee_jira_phreetech_com.json",
+            "data/jira_time_entries_state.person_jira_example_com.json",
         )
 
     def test_cli_accepts_all_users(self):
@@ -1148,9 +1148,9 @@ class JiraExportStateTest(unittest.TestCase):
         user_id = find_timecamp_user_id(
             [
                 {"user_id": "7", "email": "other@example.com"},
-                {"user_id": "8", "email": "Ezee@PhreeTech.com"},
+                {"user_id": "8", "email": "Person@Example.com"},
             ],
-            "ezee@phreetech.com",
+            "person@example.com",
         )
 
         self.assertEqual(user_id, 8)

@@ -81,40 +81,40 @@ def subitem_board(board_id, item_id, parent_item_id, user_id=9):
     }
 
 
-EFFORT_SIZE_COLUMN = {
-    "id": "color_mm2wjz9p",
-    "title": "Effort Size / Meeting Type",
+SIZE_COLUMN = {
+    "id": "color_size",
+    "title": "Size",
     "type": "status",
     "settings_str": json.dumps({
         "done_colors": [1],
-        "labels": {"0": "S (Up to 3 Hours)", "1": "XS (Up to 1 Hour)", "2": "L (Up to 2 Days)"},
+        "labels": {"0": "Medium", "1": "Small", "2": "Large"},
     }),
 }
-EXECUTION_STATUS_COLUMN = {
+ITEM_STATUS_COLUMN = {
     "id": "status",
-    "title": "Execution Status",
+    "title": "Item Status",
     "type": "status",
     "settings_str": json.dumps({
         "done_colors": [1],
-        "labels": {"0": "Working on it", "1": "Done", "2": "Blocker", "5": "Not Started"},
+        "labels": {"0": "Working on it", "1": "Done", "2": "Stuck", "5": "Not Started"},
     }),
 }
-COE_COLUMN = {
-    "id": "color_coe",
-    "title": "CoE",
+TEAM_COLUMN = {
+    "id": "color_team",
+    "title": "Team",
     "type": "status",
     "settings_str": json.dumps({
         "done_colors": [],
-        "labels": {"0": "Creative", "1": "Media", "2": "Strategy"},
+        "labels": {"0": "Design", "1": "Marketing", "2": "Sales"},
     }),
 }
-EXECUTION_STAGE_COLUMN = {
-    "id": "color_stage",
-    "title": "Execution Stage",
+PHASE_COLUMN = {
+    "id": "color_phase",
+    "title": "Phase",
     "type": "status",
     "settings_str": json.dumps({
         "done_colors": [3],
-        "labels": {"0": "Briefing", "1": "Pre Production", "2": "Production", "3": "Post Production"},
+        "labels": {"0": "Planning", "1": "Building", "2": "Testing", "3": "Released"},
     }),
 }
 
@@ -139,15 +139,15 @@ def status_item(item_id, statuses, parent_item_id=None):
 
 
 def traffic_studio_boards():
-    """Column layout of the Traffic Studio board and its subitem board."""
+    """Column layout of the Example Board board and its subitem board."""
     main_board = {
         "id": "100",
-        "name": "Traffic Studio",
+        "name": "Example Board",
         "type": "board",
         "groups": [{"id": "group1", "title": "Group", "archived": False}],
         "columns": [
-            COE_COLUMN,
-            EXECUTION_STAGE_COLUMN,
+            TEAM_COLUMN,
+            PHASE_COLUMN,
             {
                 "id": "subitems",
                 "title": "Subitems",
@@ -157,26 +157,26 @@ def traffic_studio_boards():
         ],
         "items_page": {
             "items": [
-                status_item("1", {"color_coe": 1, "color_stage": 2}),
-                status_item("2", {"color_coe": 0, "color_stage": 3}),
+                status_item("1", {"color_team": 1, "color_phase": 2}),
+                status_item("2", {"color_team": 0, "color_phase": 3}),
             ]
         },
     }
     subitems_board = {
         "id": "200",
-        "name": "Subitems of Traffic Studio",
+        "name": "Subitems of Example Board",
         "type": "sub_items_board",
         "groups": [],
-        "columns": [EFFORT_SIZE_COLUMN, EXECUTION_STATUS_COLUMN],
+        "columns": [SIZE_COLUMN, ITEM_STATUS_COLUMN],
         "items_page": {
             "items": [
-                status_item("11", {"color_mm2wjz9p": 1, "status": 0}, parent_item_id="1"),
-                status_item("12", {"color_mm2wjz9p": 1, "status": 5}, parent_item_id="1"),
-                status_item("13", {"color_mm2wjz9p": 1, "status": 2}, parent_item_id="1"),
-                status_item("14", {"color_mm2wjz9p": 1, "status": None}, parent_item_id="1"),
-                status_item("15", {"color_mm2wjz9p": 1, "status": 1}, parent_item_id="1"),
-                status_item("16", {"color_mm2wjz9p": 0, "status": 1}, parent_item_id="1"),
-                status_item("17", {"color_mm2wjz9p": 0, "status": 0}, parent_item_id="1"),
+                status_item("11", {"color_size": 1, "status": 0}, parent_item_id="1"),
+                status_item("12", {"color_size": 1, "status": 5}, parent_item_id="1"),
+                status_item("13", {"color_size": 1, "status": 2}, parent_item_id="1"),
+                status_item("14", {"color_size": 1, "status": None}, parent_item_id="1"),
+                status_item("15", {"color_size": 1, "status": 1}, parent_item_id="1"),
+                status_item("16", {"color_size": 0, "status": 1}, parent_item_id="1"),
+                status_item("17", {"color_size": 0, "status": 0}, parent_item_id="1"),
             ]
         },
     }
@@ -302,14 +302,14 @@ class FetchMondayDoneStatusTest(unittest.TestCase):
             if task["task_id"] not in {"monday_100", "monday_100_group1"}
         }
 
-    def test_subitems_use_execution_status_not_first_status_column(self):
+    def test_subitems_use_item_status_not_first_status_column(self):
         task_ids = self.fetch_item_ids()
 
-        # XS effort size with open Execution Status stays visible.
+        # A small size with open Item Status stays visible.
         self.assertTrue(
             {"monday_11", "monday_12", "monday_13", "monday_14", "monday_17"} <= task_ids
         )
-        # Execution Status = Done is hidden, with any effort size.
+        # Item Status = Done is hidden, with any size.
         self.assertNotIn("monday_15", task_ids)
         self.assertNotIn("monday_16", task_ids)
 
@@ -326,7 +326,7 @@ class FetchMondayDoneStatusTest(unittest.TestCase):
 
     def test_configured_column_overrides_auto_detection(self):
         task_ids = self.fetch_item_ids(
-            done_status_columns=["effort size / meeting type"],
+            done_status_columns=[" size "],
         )
 
         self.assertEqual(
@@ -337,33 +337,33 @@ class FetchMondayDoneStatusTest(unittest.TestCase):
     def test_configured_columns_match_title_or_id_in_order(self):
         board = {
             "columns": [
-                EFFORT_SIZE_COLUMN,
-                EXECUTION_STATUS_COLUMN,
-                EXECUTION_STAGE_COLUMN,
+                SIZE_COLUMN,
+                ITEM_STATUS_COLUMN,
+                PHASE_COLUMN,
             ],
         }
 
         self.assertEqual(
-            get_done_status_column(board, ["Execution Stage", "status"]).column_id,
-            "color_stage",
+            get_done_status_column(board, ["Phase", "status"]).column_id,
+            "color_phase",
         )
         self.assertEqual(
-            get_done_status_column(board, ["color_mm2wjz9p"]).column_id,
-            "color_mm2wjz9p",
+            get_done_status_column(board, ["color_size"]).column_id,
+            "color_size",
         )
 
     def test_missing_configured_column_falls_back_to_auto_detection(self):
-        board = {"columns": [COE_COLUMN, EXECUTION_STAGE_COLUMN]}
+        board = {"columns": [TEAM_COLUMN, PHASE_COLUMN]}
 
-        done_column = get_done_status_column(board, ["Execution Status"])
+        done_column = get_done_status_column(board, ["Item Status"])
 
-        self.assertEqual(done_column.column_id, "color_stage")
+        self.assertEqual(done_column.column_id, "color_phase")
         self.assertEqual(done_column.done_statuses, frozenset({3}))
 
     def test_default_status_column_without_done_labels_uses_default_index(self):
         board = {
             "columns": [
-                EFFORT_SIZE_COLUMN,
+                SIZE_COLUMN,
                 {"id": "status", "title": "Status", "type": "status", "settings_str": "{}"},
             ],
         }
@@ -374,18 +374,18 @@ class FetchMondayDoneStatusTest(unittest.TestCase):
         self.assertEqual(done_column.done_statuses, frozenset({1}))
 
     def test_board_without_done_labels_has_no_done_column(self):
-        self.assertIsNone(get_done_status_column({"columns": [COE_COLUMN]}))
+        self.assertIsNone(get_done_status_column({"columns": [TEAM_COLUMN]}))
         self.assertIsNone(get_done_status_column({"columns": []}))
 
     def test_load_done_status_columns_from_env(self):
         with patch.dict(
             os.environ,
-            {"MONDAY_DONE_STATUS_COLUMNS": " Execution Status, Execution Stage ,"},
+            {"MONDAY_DONE_STATUS_COLUMNS": " Item Status, Phase ,"},
             clear=False,
         ):
             self.assertEqual(
                 load_done_status_columns_from_env(),
-                ["Execution Status", "Execution Stage"],
+                ["Item Status", "Phase"],
             )
 
 

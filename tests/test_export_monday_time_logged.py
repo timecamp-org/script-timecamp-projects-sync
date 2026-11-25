@@ -17,7 +17,7 @@ class ExportMondayTimeLoggedTest(unittest.TestCase):
             "monday_1": {
                 "task_id": "monday_1",
                 "parent_id": 0,
-                "name": "Traffic Studio",
+                "name": "Example Board",
             },
             "monday_1_group_projects": {
                 "task_id": "monday_1_group_projects",
@@ -120,7 +120,7 @@ class ExportMondayTimeLoggedTest(unittest.TestCase):
     def test_rejects_missing_duplicate_and_wrong_type_columns(self):
         base_board = {
             "id": "1",
-            "name": "Traffic Studio",
+            "name": "Example Board",
             "columns": [
                 {"id": "numbers", "title": "Time Logged", "type": "numbers"},
             ],
@@ -137,7 +137,7 @@ class ExportMondayTimeLoggedTest(unittest.TestCase):
             find_numbers_column_by_title(
                 {
                     "id": "1",
-                    "name": "Traffic Studio",
+                    "name": "Example Board",
                     "columns": [
                         {"id": "text", "title": "Time Logged", "type": "text"},
                     ],
@@ -149,7 +149,7 @@ class ExportMondayTimeLoggedTest(unittest.TestCase):
             find_numbers_column_by_title(
                 {
                     "id": "1",
-                    "name": "Traffic Studio",
+                    "name": "Example Board",
                     "columns": [
                         {"id": "a", "title": "Time Logged", "type": "numbers"},
                         {"id": "b", "title": "Time Logged", "type": "numbers"},
