@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import unicodedata
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -16,6 +17,9 @@ DEFAULT_WORKSPACE_NAME = "Workspace"
 DEFAULT_SPACE_NAME = "Space"
 DEFAULT_FOLDER_NAME = "Folder"
 DEFAULT_LIST_NAME = "List"
+# Emoji and other symbols (So), plus the variation selectors (Mn) and joiners
+# (Cf) that emoji sequences contain.
+DECORATIVE_CHARACTER_CATEGORIES = {"So", "Mn", "Cf"}
 
 
 class ClickUpClient:
@@ -272,8 +276,14 @@ def build_custom_fields_description(
 
 
 def custom_field_display_name(name: str) -> str:
-    """Remove decorative symbols used by selected ClickUp field names."""
-    return name.replace("🆔", "").replace("🔢", "").strip()
+    """Remove leading decorative symbols, such as emoji, from a field name."""
+    start = 0
+    while start < len(name) and (
+        name[start].isspace()
+        or unicodedata.category(name[start]) in DECORATIVE_CHARACTER_CATEGORIES
+    ):
+        start += 1
+    return name[start:].strip()
 
 
 def find_custom_field(

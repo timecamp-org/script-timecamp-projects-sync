@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
         "--task-ids",
         required=True,
         type=parse_task_ids,
-        help="Comma-separated task IDs, e.g. 34523534,34523535.",
+        help="Comma-separated task IDs, e.g. 1001,1002.",
     )
     parser.add_argument(
         "--dry-run",

@@ -179,7 +179,7 @@ moving an existing incremental cursor. Use `--state-file PATH` or
 For cron, configure the users and their tokens, then run the undated command:
 
 ```cron
-*/15 * * * * cd /home/ubuntu/scripts/topo/script-timecamp-projects-sync && uv run --env-file .env --python 3.13 --with-requirements requirements.txt python export_time_entries_jira.py --all-users >> /home/ubuntu/crontab_scripts/logs/topo_jira_export.log 2>&1
+*/15 * * * * cd /path/to/script-timecamp-projects-sync && uv run --env-file .env --python 3.13 --with-requirements requirements.txt python export_time_entries_jira.py --all-users >> /path/to/logs/jira_export.log 2>&1
 ```
 
 ### Mirroring rules

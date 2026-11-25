@@ -11,19 +11,19 @@ from fetch_clickup import (
 
 class FakeClickUpClient:
     def get_workspaces(self):
-        return [{"id": "w1", "name": "Client Workspace"}]
+        return [{"id": "w1", "name": "Example Workspace"}]
 
     def get_spaces(self, workspace_id):
         self.workspace_id = workspace_id
-        return [{"id": "s1", "name": "Research Hub"}]
+        return [{"id": "s1", "name": "Main Space"}]
 
     def get_folders(self, space_id):
         self.space_id = space_id
-        return [{"id": "f1", "name": "Research Projects"}]
+        return [{"id": "f1", "name": "Active Folder"}]
 
     def get_lists(self, folder_id):
         self.folder_id = folder_id
-        return [{"id": "l1", "name": "Client / Revenue Projects"}]
+        return [{"id": "l1", "name": "Team / Projects"}]
 
     def get_tasks(self, list_id, include_closed=False):
         self.list_id = list_id
@@ -42,17 +42,17 @@ class FakeClickUpClient:
                 ],
                 "custom_fields": [
                     {
-                        "id": "cf-client",
-                        "name": "Client code",
+                        "id": "cf-code",
+                        "name": "Project code",
                         "value": "ACME",
                     },
                     {
                         "id": "cf-type",
-                        "name": "Revenue type",
+                        "name": "Billing type",
                         "value": "opt-1",
                         "type_config": {
                             "options": [
-                                {"id": "opt-1", "name": "Recurring"}
+                                {"id": "opt-1", "name": "Fixed price"}
                             ]
                         },
                     },
@@ -76,12 +76,12 @@ class FakeClickUpClient:
 class ClickUpFetcherTest(unittest.TestCase):
     def test_fetches_flat_projects_with_users_and_description(self):
         env = {
-            "CLICKUP_WORKSPACE_NAME": "Client Workspace",
-            "CLICKUP_SPACE_NAME": "Research Hub",
-            "CLICKUP_FOLDER_NAME": "Research Projects",
-            "CLICKUP_LIST_NAME": "Client / Revenue Projects",
+            "CLICKUP_WORKSPACE_NAME": "Example Workspace",
+            "CLICKUP_SPACE_NAME": "Main Space",
+            "CLICKUP_FOLDER_NAME": "Active Folder",
+            "CLICKUP_LIST_NAME": "Team / Projects",
             "CLICKUP_DESCRIPTION_CUSTOM_FIELDS": (
-                "cf-client, Revenue type, cf-owner"
+                "cf-code, Billing type, cf-owner"
             ),
             "CLICKUP_INCLUDE_CLOSED": "false",
         }
@@ -112,8 +112,8 @@ class ClickUpFetcherTest(unittest.TestCase):
                     },
                     "description": (
                         "ClickUp custom fields:\n"
-                        "Client code: ACME\n"
-                        "Revenue type: Recurring\n"
+                        "Project code: ACME\n"
+                        "Billing type: Fixed price\n"
                         "Project owner: Person"
                     ),
                 }
@@ -122,10 +122,10 @@ class ClickUpFetcherTest(unittest.TestCase):
 
     def test_custom_fields_are_optional(self):
         env = {
-            "CLICKUP_WORKSPACE_NAME": "Client Workspace",
-            "CLICKUP_SPACE_NAME": "Research Hub",
-            "CLICKUP_FOLDER_NAME": "Research Projects",
-            "CLICKUP_LIST_NAME": "Client / Revenue Projects",
+            "CLICKUP_WORKSPACE_NAME": "Example Workspace",
+            "CLICKUP_SPACE_NAME": "Main Space",
+            "CLICKUP_FOLDER_NAME": "Active Folder",
+            "CLICKUP_LIST_NAME": "Team / Projects",
         }
 
         with patch.dict(os.environ, env, clear=True):
@@ -137,8 +137,8 @@ class ClickUpFetcherTest(unittest.TestCase):
 
     def test_find_named_item_is_case_insensitive(self):
         item = find_named_item(
-            [{"id": "1", "name": "Revenue Projects"}],
-            " revenue projects ",
+            [{"id": "1", "name": "Active Projects"}],
+            " active projects ",
             "list",
         )
         self.assertEqual(item["id"], "1")
@@ -152,8 +152,8 @@ class ClickUpFetcherTest(unittest.TestCase):
                     "value": ["a", "b"],
                     "type_config": {
                         "options": [
-                            {"id": "a", "label": "Research"},
-                            {"id": "b", "label": "Analysis"},
+                            {"id": "a", "label": "Design"},
+                            {"id": "b", "label": "Development"},
                         ]
                     },
                 }
@@ -162,7 +162,7 @@ class ClickUpFetcherTest(unittest.TestCase):
         )
         self.assertEqual(
             description,
-            "ClickUp custom fields:\nServices: Research, Analysis",
+            "ClickUp custom fields:\nServices: Design, Development",
         )
 
     def test_formats_dropdown_value_by_orderindex(self):
@@ -192,12 +192,12 @@ class ClickUpFetcherTest(unittest.TestCase):
             [
                 {
                     "id": "project-id",
-                    "name": "🆔 Project ID",
+                    "name": "📌 Project ID",
                     "value": "123",
                 },
                 {
                     "id": "company-id",
-                    "name": "🔢 Company ID",
+                    "name": "⭐️ Company ID",
                     "value": "456",
                 },
             ],

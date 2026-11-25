@@ -60,7 +60,7 @@ consumed by `sync_projects.py`:
     },
     "custom_fields": {
       "456": "Client",
-      "789": "W-2"
+      "789": "Fixed price"
     }
   }
 ]
@@ -90,10 +90,9 @@ are not modified, even if they have a matching external ID prefix.
 ### ClickUp → TimeCamp Synchronization
 
 Configure `CLICKUP_OAUTH_ACCESS_TOKEN` and the ClickUp hierarchy in `.env`.
-`CLICKUP_WORKSPACE_NAME` is required. By default, the remaining path is
-`Research Hub / Research Projects / Client / Revenue Projects`
-(the last segment is the ClickUp List named `Client / Revenue Projects`).
-Tasks directly in that List become a flat set of TimeCamp projects; ClickUp
+`CLICKUP_WORKSPACE_NAME` is required. Set `CLICKUP_SPACE_NAME`,
+`CLICKUP_FOLDER_NAME`, and `CLICKUP_LIST_NAME` to the Space, Folder, and List
+that hold the projects. Tasks directly in that List become a flat set of TimeCamp projects; ClickUp
 subtasks are omitted. Optionally set `CLICKUP_DESCRIPTION_CUSTOM_FIELDS` to a
 comma-separated list of exact custom-field names or IDs. There is no limit on
 the number of configured fields. Their values are copied into each newly
@@ -101,7 +100,7 @@ created TimeCamp project's description; without this variable, no custom
 fields are added to the description.
 
 ```dotenv
-CLICKUP_DESCRIPTION_CUSTOM_FIELDS=Client code,Revenue type,custom_field_id
+CLICKUP_DESCRIPTION_CUSTOM_FIELDS=Project code,Billing type,custom_field_id
 ```
 
 ```bash
@@ -319,14 +318,14 @@ python3 helpers/assign_random_apple_colors.py --dry-run
 uv run --env-file .env --with-requirements requirements.txt python helpers/assign_random_apple_colors.py --dry-run
 
 # Batch assign users to selected tasks
-uv run --env-file .env --with-requirements requirements.txt python helpers/assign_users_to_task.py --task-ids 34523534,34523535 --user-ids 364263,364264
+uv run --env-file .env --with-requirements requirements.txt python helpers/assign_users_to_task.py --task-ids 1001,1002 --user-ids 2001,2002
 
 # Batch assign users to all root level tasks
-uv run --env-file .env --with-requirements requirements.txt python helpers/assign_users_to_task.py --user-ids 364263,364264
+uv run --env-file .env --with-requirements requirements.txt python helpers/assign_users_to_task.py --user-ids 2001,2002
 
 # Remove all direct user assignments from active tasks in selected task trees
-uv run --env-file .env --with-requirements requirements.txt python helpers/unassign_users_from_tasks.py --task_ids 34523534,34523535 --dry-run
-uv run --env-file .env --with-requirements requirements.txt python helpers/unassign_users_from_tasks.py --task_ids 34523534,34523535
+uv run --env-file .env --with-requirements requirements.txt python helpers/unassign_users_from_tasks.py --task_ids 1001,1002 --dry-run
+uv run --env-file .env --with-requirements requirements.txt python helpers/unassign_users_from_tasks.py --task_ids 1001,1002
 
 # Fill missing mandatory tags from tasks.json on time entries for all account users
 uv run --env-file .env --with-requirements requirements.txt python helpers/assign_mandatory_tags_to_time_entries.py --from 2026-06-01 --to 2026-06-05 --dry-run

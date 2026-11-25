@@ -3,12 +3,12 @@
 Deploy the repo on the server at:
 
 ```bash
-/home/ubuntu/scripts/script-timecamp-projects-sync
+/path/to/script-timecamp-projects-sync
 ```
 
 ## Required Config
 
-Create `/home/ubuntu/scripts/script-timecamp-projects-sync/.env`:
+Create `/path/to/script-timecamp-projects-sync/.env`:
 
 ```bash
 TIMECAMP_API_TOKEN=...
@@ -26,7 +26,7 @@ Optional config:
 # not exported. The first column found on each board is used. Without it, the
 # script uses the column with id "status", then the first status column with
 # done labels. Check the "Done status column for ..." lines in the fetch log.
-MONDAY_DONE_STATUS_COLUMNS=Execution Status,Execution Stage
+MONDAY_DONE_STATUS_COLUMNS=Item Status,Phase
 
 # Run only selected sync steps. Default is all actions.
 TIMECAMP_SYNC_ACTIONS=tasks,names,estimates,archive,tags,mandatory_tags,users
@@ -54,7 +54,7 @@ Available `TIMECAMP_SYNC_ACTIONS`: `tasks`, `names`, `estimates`, `archive`,
 ## Manual Run
 
 ```bash
-cd /home/ubuntu/scripts/script-timecamp-projects-sync
+cd /path/to/script-timecamp-projects-sync
 uv run --env-file .env --python 3.13 --with-requirements requirements.txt python fetch_mondaycom.py
 uv run --env-file .env --python 3.13 --with-requirements requirements.txt python sync_projects.py
 ```
@@ -62,7 +62,7 @@ uv run --env-file .env --python 3.13 --with-requirements requirements.txt python
 Backfill missing mandatory tags on time entries:
 
 ```bash
-cd /home/ubuntu/scripts/script-timecamp-projects-sync
+cd /path/to/script-timecamp-projects-sync
 uv run --env-file .env --python 3.13 --with-requirements requirements.txt python helpers/assign_mandatory_tags_to_time_entries.py --from 2026-02-01 --to "$(date +%Y-%m-%d)"
 ```
 
@@ -77,17 +77,17 @@ crontab -e
 Example daily sync:
 
 ```cron
-15 2 * * * cd /home/ubuntu/scripts/script-timecamp-projects-sync && uv run --env-file .env --python 3.13 --with-requirements requirements.txt python fetch_mondaycom.py >> /home/ubuntu/crontab_scripts/logs/mondaycom_fetch.log 2>&1 && uv run --env-file .env --python 3.13 --with-requirements requirements.txt python sync_projects.py >> /home/ubuntu/crontab_scripts/logs/mondaycom_sync.log 2>&1
+15 2 * * * cd /path/to/script-timecamp-projects-sync && uv run --env-file .env --python 3.13 --with-requirements requirements.txt python fetch_mondaycom.py >> /path/to/logs/mondaycom_fetch.log 2>&1 && uv run --env-file .env --python 3.13 --with-requirements requirements.txt python sync_projects.py >> /path/to/logs/mondaycom_sync.log 2>&1
 ```
 
 Example daily time-entry mandatory-tag backfill for the last 10 days:
 
 ```cron
-45 2 * * * cd /home/ubuntu/scripts/script-timecamp-projects-sync && uv run --env-file .env --python 3.13 --with-requirements requirements.txt python helpers/assign_mandatory_tags_to_time_entries.py --from $(date -d "10 days ago" +\%Y-\%m-\%d) --to $(date +\%Y-\%m-\%d) >> /home/ubuntu/crontab_scripts/logs/mondaycom_time_entry_tags.log 2>&1
+45 2 * * * cd /path/to/script-timecamp-projects-sync && uv run --env-file .env --python 3.13 --with-requirements requirements.txt python helpers/assign_mandatory_tags_to_time_entries.py --from $(date -d "10 days ago" +\%Y-\%m-\%d) --to $(date +\%Y-\%m-\%d) >> /path/to/logs/mondaycom_time_entry_tags.log 2>&1
 ```
 
 Create the log directory if needed:
 
 ```bash
-mkdir -p /home/ubuntu/crontab_scripts/logs
+mkdir -p /path/to/logs
 ```

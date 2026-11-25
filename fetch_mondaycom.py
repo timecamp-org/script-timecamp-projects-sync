@@ -617,7 +617,7 @@ def get_done_status_column(
 ) -> Optional[DoneStatusColumn]:
     """Return the status column that tells if an item on the board is done.
 
-    A board can have more status columns (e.g. "Effort Size") before the real
+    A board can have more status columns (e.g. "Size") before the real
     item status, so the first status column is not always correct. Priority:
     configured columns (title or id), the default Monday column with id
     "status", then the first status column with done labels.
