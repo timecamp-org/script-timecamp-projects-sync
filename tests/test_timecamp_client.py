@@ -346,6 +346,29 @@ class TimeCampClientTest(unittest.TestCase):
             ],
         )
 
+    def test_add_and_remove_entry_tags_send_comma_separated_ids(self):
+        calls = []
+
+        class FakeClient(TimeCampClient):
+            def __init__(self):
+                pass
+
+            def _request(self, method, endpoint, json=None, params=None):
+                calls.append((method, endpoint, json))
+                return []
+
+        client = FakeClient()
+        client.add_tags_to_entry(123, [7, 8])
+        client.remove_tags_from_entry(123, [9])
+
+        self.assertEqual(
+            calls,
+            [
+                ("PUT", "entries/123/tags", {"tags": "7,8"}),
+                ("DELETE", "entries/123/tags", {"tags": "9"}),
+            ],
+        )
+
     def test_update_time_entry_task_uses_v3_endpoint(self):
         calls = []
 

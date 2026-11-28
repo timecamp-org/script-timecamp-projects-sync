@@ -1,9 +1,10 @@
 import argparse
 import json
 import os
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Set
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
 
 import requests
 from dotenv import load_dotenv
@@ -344,6 +345,8 @@ class MondayFetcher:
         mandatory_tag_columns: Optional[List[str]] = None,
         ignored_user_assigned_board_ids: Optional[Iterable[str]] = None,
         done_status_columns: Optional[Iterable[str]] = None,
+        subitem_mandatory_tag_columns: Optional[Dict[str, str]] = None,
+        placeholder_tags: Optional[Iterable[str]] = None,
     ):
         api_token = os.getenv("MONDAY_API_TOKEN")
         if not api_token:
@@ -354,6 +357,18 @@ class MondayFetcher:
         self.include_done = include_done
         self.include_archived_groups = include_archived_groups
         self.mandatory_tag_columns = mandatory_tag_columns or load_mandatory_tag_columns_from_env()
+        self.subitem_mandatory_tag_columns = (
+            subitem_mandatory_tag_columns
+            if subitem_mandatory_tag_columns is not None
+            else load_subitem_mandatory_tag_columns_from_env()
+        )
+        self.placeholder_tags = list(
+            placeholder_tags
+            if placeholder_tags is not None
+            else load_placeholder_tags_from_env()
+        )
+        self.subitem_tag_values: Dict[str, Dict[str, List[str]]] = {}
+        self.subitem_tag_result = SubitemMandatoryTagResult()
         self.ignored_user_assigned_board_ids = normalize_board_ids(
             ignored_user_assigned_board_ids
             if ignored_user_assigned_board_ids is not None
@@ -370,6 +385,11 @@ class MondayFetcher:
 
     def fetch_all_data(self) -> List[Dict[str, Any]]:
         """Fetch Monday data and return flattened task structure."""
+        task_sets = self.fetch_task_sets()
+        return task_sets.with_done if self.include_done else task_sets.active
+
+    def fetch_task_sets(self) -> "MondayTaskSets":
+        """Fetch Monday data once and return tasks without and with done items."""
         if not self.board_ids:
             print("Fetching all Monday boards...")
             self.board_ids = [
@@ -388,6 +408,8 @@ class MondayFetcher:
         self._fetch_users()
 
         flattened_data: List[Dict[str, Any]] = []
+        done_task_ids: Set[str] = set()
+        self.subitem_tag_values = {}
         subitem_board_ids = self._collect_subitem_board_ids(boards)
         self._assignment_ignored_board_ids = expand_ignored_user_assigned_board_ids(
             self.ignored_user_assigned_board_ids,
@@ -414,8 +436,10 @@ class MondayFetcher:
             for group_task in self._iterate_groups(board):
                 flattened_data.append(group_task)
 
-            for item_task in self._iterate_items(board):
+            for item_task, is_done in self._iterate_items(board):
                 flattened_data.append(item_task)
+                if is_done:
+                    done_task_ids.add(item_task["task_id"])
 
         if subitem_board_ids:
             print(f"Fetching {len(subitem_board_ids)} subitem board(s)...")
@@ -426,10 +450,30 @@ class MondayFetcher:
             self._fetch_boards_done_columns(subitem_boards)
 
             for board in subitem_boards:
-                for subitem_task in self._iterate_items(board):
+                for subitem_task, is_done in self._iterate_items(board):
                     flattened_data.append(subitem_task)
+                    if is_done:
+                        done_task_ids.add(subitem_task["task_id"])
 
-        return flattened_data
+        self.subitem_tag_result = apply_subitem_mandatory_tags(
+            flattened_data,
+            self.subitem_tag_values,
+            self.placeholder_tags,
+        )
+        if self.subitem_mandatory_tag_columns:
+            print(
+                "  Subitem mandatory tags: "
+                f"{self.subitem_tag_result.assigned} subitem(s) use their own column, "
+                f"{self.subitem_tag_result.mapped} of them mapped to another tag value"
+            )
+
+        return MondayTaskSets(
+            active=[
+                task for task in flattened_data
+                if task["task_id"] not in done_task_ids
+            ],
+            with_done=flattened_data,
+        )
 
     def _iterate_groups(self, board: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
         for group in board.get("groups", []):
@@ -443,15 +487,15 @@ class MondayFetcher:
                 "parent_id": board_external_id(board["id"]),
             }
 
-    def _iterate_items(self, board: Dict[str, Any]) -> Iterable[Dict[str, Any]]:
+    def _iterate_items(self, board: Dict[str, Any]) -> Iterable[Tuple[Dict[str, Any], bool]]:
+        """Yield (task, is_done) for every item on the board."""
         done_column = self.boards_done_columns.get(str(board["id"]))
 
         for item in (board.get("items_page") or {}).get("items", []):
             if self._is_subitem_without_parent(board, item):
                 continue
 
-            if self._is_item_done(item, done_column) and not self.include_done:
-                continue
+            is_done = self._is_item_done(item, done_column)
 
             parent_item = item.get("parent_item")
             if parent_item and parent_item.get("id"):
@@ -471,12 +515,17 @@ class MondayFetcher:
             if mandatory_tags:
                 task[MONDAY_MANDATORY_TAGS_OUTPUT_KEY] = mandatory_tags
 
+            if board.get("type") == MONDAY_BOARD_TYPE_SUBITEM_BOARD:
+                subitem_tag_values = self._get_subitem_tag_values(board, item)
+                if subitem_tag_values:
+                    self.subitem_tag_values[task["task_id"]] = subitem_tag_values
+
             if self._should_export_assigned_users(board):
                 assigned_users = self._get_assigned_users(item)
                 if assigned_users:
                     task[MONDAY_ASSIGNED_USERS_OUTPUT_KEY] = assigned_users
 
-            yield task
+            yield task, is_done
 
     def _collect_subitem_board_ids(self, boards: List[Dict[str, Any]]) -> Set[str]:
         subitem_board_ids: Set[str] = set()
@@ -566,27 +615,28 @@ class MondayFetcher:
         if not self.mandatory_tag_columns:
             return {}
 
-        column_titles = {
-            str(column.get("id")): str(column.get("title") or "")
-            for column in board.get("columns", [])
-        }
-        requested_columns = {
-            column_name.lower(): column_name
-            for column_name in self.mandatory_tag_columns
-        }
-        tags: Dict[str, List[str]] = {}
+        return get_column_tag_values(
+            board,
+            item,
+            {column_name: column_name for column_name in self.mandatory_tag_columns},
+        )
 
-        for column_value in item.get("column_values", []):
-            column_title = column_titles.get(str(column_value.get("id")), "")
-            output_name = requested_columns.get(column_title.lower())
-            if not output_name:
-                continue
+    def _get_subitem_tag_values(
+        self,
+        board: Dict[str, Any],
+        item: Dict[str, Any],
+    ) -> Dict[str, List[str]]:
+        if not self.subitem_mandatory_tag_columns:
+            return {}
 
-            values = parse_tag_values(column_value.get("text"))
-            if values:
-                tags[output_name] = values
-
-        return tags
+        return get_column_tag_values(
+            board,
+            item,
+            {
+                column_title: tag_list_name
+                for tag_list_name, column_title in self.subitem_mandatory_tag_columns.items()
+            },
+        )
 
     def _should_export_assigned_users(self, board: Dict[str, Any]) -> bool:
         return str(board.get("id")) not in self._assignment_ignored_board_ids
@@ -609,6 +659,202 @@ class MondayFetcher:
             json.dump(data, f, indent=2, ensure_ascii=False)
 
         return filename
+
+
+@dataclass
+class MondayTaskSets:
+    """Tasks from one Monday fetch, without and with items marked as done."""
+
+    active: List[Dict[str, Any]]
+    with_done: List[Dict[str, Any]]
+
+
+@dataclass
+class SubitemMandatoryTagResult:
+    assigned: int = 0
+    mapped: int = 0
+
+
+def get_column_tag_values(
+    board: Dict[str, Any],
+    item: Dict[str, Any],
+    output_names_by_column_title: Dict[str, str],
+) -> Dict[str, List[str]]:
+    """Read comma-separated column values, keyed by the requested output name."""
+    column_titles = {
+        str(column.get("id")): str(column.get("title") or "")
+        for column in board.get("columns", [])
+    }
+    requested_columns = {
+        column_title.lower(): output_name
+        for column_title, output_name in output_names_by_column_title.items()
+    }
+    tags: Dict[str, List[str]] = {}
+
+    for column_value in item.get("column_values", []):
+        column_title = column_titles.get(str(column_value.get("id")), "")
+        output_name = requested_columns.get(column_title.lower())
+        if not output_name:
+            continue
+
+        values = parse_tag_values(column_value.get("text"))
+        if values:
+            tags[output_name] = values
+
+    return tags
+
+
+def apply_subitem_mandatory_tags(
+    tasks: List[Dict[str, Any]],
+    subitem_tag_values: Dict[str, Dict[str, List[str]]],
+    placeholder_tags: Iterable[str],
+) -> SubitemMandatoryTagResult:
+    """Give subitems their own mandatory tags when the inherited tag is missing
+    or only a placeholder value.
+
+    A subitem column value is mapped to the tag value that the same column value
+    has most often under rows with a real (non-placeholder) tag. Without such
+    rows the column value itself is used.
+    """
+    result = SubitemMandatoryTagResult()
+    if not subitem_tag_values:
+        return result
+
+    placeholder_keys = {normalize_tag_key(tag) for tag in placeholder_tags}
+    tasks_by_id = {str(task["task_id"]): task for task in tasks}
+    value_map = build_subitem_tag_value_map(
+        tasks_by_id,
+        subitem_tag_values,
+        placeholder_keys,
+    )
+
+    for task_id, values_by_tag_list in subitem_tag_values.items():
+        task = tasks_by_id.get(task_id)
+        if not task:
+            continue
+
+        own_tags = task.get(MONDAY_MANDATORY_TAGS_OUTPUT_KEY) or {}
+        inherited_tags = get_inherited_mandatory_tags(task, tasks_by_id)
+
+        for tag_list_name, values in values_by_tag_list.items():
+            if own_tags.get(tag_list_name):
+                continue
+            if not is_missing_or_placeholder(
+                inherited_tags.get(tag_list_name),
+                placeholder_keys,
+            ):
+                continue
+
+            source_values = [
+                value for value in values
+                if normalize_tag_key(value) not in placeholder_keys
+            ]
+            if not source_values:
+                continue
+
+            tag_list_map = value_map.get(tag_list_name, {})
+            tag_values = unique_tag_values(
+                tag_list_map.get(normalize_tag_key(value), value)
+                for value in source_values
+            )
+            task.setdefault(MONDAY_MANDATORY_TAGS_OUTPUT_KEY, {})[tag_list_name] = tag_values
+            result.assigned += 1
+            if [normalize_tag_key(value) for value in tag_values] != [
+                normalize_tag_key(value) for value in source_values
+            ]:
+                result.mapped += 1
+
+    return result
+
+
+def build_subitem_tag_value_map(
+    tasks_by_id: Dict[str, Dict[str, Any]],
+    subitem_tag_values: Dict[str, Dict[str, List[str]]],
+    placeholder_keys: Set[str],
+) -> Dict[str, Dict[str, str]]:
+    """Map each subitem column value to its most common real tag value."""
+    counts: Dict[str, Dict[str, Counter]] = defaultdict(lambda: defaultdict(Counter))
+
+    for task_id, values_by_tag_list in subitem_tag_values.items():
+        task = tasks_by_id.get(task_id)
+        if not task:
+            continue
+
+        own_tags = task.get(MONDAY_MANDATORY_TAGS_OUTPUT_KEY) or {}
+        inherited_tags = get_inherited_mandatory_tags(task, tasks_by_id)
+
+        for tag_list_name, values in values_by_tag_list.items():
+            target_values = own_tags.get(tag_list_name) or inherited_tags.get(tag_list_name) or []
+            if len(target_values) != 1:
+                continue
+
+            target_value = target_values[0]
+            if normalize_tag_key(target_value) in placeholder_keys:
+                continue
+
+            for value in values:
+                value_key = normalize_tag_key(value)
+                if value_key in placeholder_keys:
+                    continue
+                counts[tag_list_name][value_key][target_value] += 1
+
+    return {
+        tag_list_name: {
+            value_key: min(
+                target_counts.items(),
+                key=lambda target: (-target[1], target[0].lower(), target[0]),
+            )[0]
+            for value_key, target_counts in values.items()
+        }
+        for tag_list_name, values in counts.items()
+    }
+
+
+def get_inherited_mandatory_tags(
+    task: Dict[str, Any],
+    tasks_by_id: Dict[str, Dict[str, Any]],
+) -> Dict[str, List[str]]:
+    """Return mandatory tags from the nearest ancestor that sets each tag list."""
+    inherited_tags: Dict[str, List[str]] = {}
+    visited: Set[str] = set()
+    parent_id = task.get("parent_id")
+
+    while parent_id not in (None, "", 0, "0") and str(parent_id) not in visited:
+        visited.add(str(parent_id))
+        parent_task = tasks_by_id.get(str(parent_id))
+        if not parent_task:
+            break
+
+        for tag_list_name, values in (parent_task.get(MONDAY_MANDATORY_TAGS_OUTPUT_KEY) or {}).items():
+            if values:
+                inherited_tags.setdefault(tag_list_name, values)
+        parent_id = parent_task.get("parent_id")
+
+    return inherited_tags
+
+
+def is_missing_or_placeholder(values: Optional[List[str]], placeholder_keys: Set[str]) -> bool:
+    if not values:
+        return True
+
+    return all(normalize_tag_key(value) in placeholder_keys for value in values)
+
+
+def normalize_tag_key(value: Any) -> str:
+    return " ".join(str(value).split()).casefold()
+
+
+def unique_tag_values(values: Iterable[str]) -> List[str]:
+    unique_values: List[str] = []
+    seen: Set[str] = set()
+
+    for value in values:
+        value_key = normalize_tag_key(value)
+        if value_key and value_key not in seen:
+            unique_values.append(value)
+            seen.add(value_key)
+
+    return unique_values
 
 
 def get_done_status_column(
@@ -802,6 +1048,37 @@ def load_done_status_columns_from_env() -> List[str]:
     ]
 
 
+def parse_subitem_mandatory_tag_columns(raw_value: Optional[str]) -> Dict[str, str]:
+    """Parse "Tag list=Subitem column title" pairs, separated by commas."""
+    columns: Dict[str, str] = {}
+
+    for raw_pair in (raw_value or "").split(","):
+        pair = raw_pair.strip()
+        if not pair:
+            continue
+
+        tag_list_name, separator, column_title = pair.partition("=")
+        if not separator or not tag_list_name.strip() or not column_title.strip():
+            raise ValueError(
+                f"Invalid subitem mandatory tag column {pair!r}; "
+                "expected 'Tag list=Subitem column title'"
+            )
+        columns[tag_list_name.strip()] = column_title.strip()
+
+    return columns
+
+
+def load_subitem_mandatory_tag_columns_from_env() -> Dict[str, str]:
+    return parse_subitem_mandatory_tag_columns(
+        os.getenv("MONDAY_SUBITEM_MEANDATORY_TAGS")
+        or os.getenv("MONDAY_SUBITEM_MANDATORY_TAGS", "")
+    )
+
+
+def load_placeholder_tags_from_env() -> List[str]:
+    return parse_tag_values(os.getenv("MONDAY_PLACEHOLDER_TAGS", ""))
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -836,6 +1113,29 @@ def parse_args() -> argparse.Namespace:
             "Overrides MONDAY_MEANDATORY_TAGS/MONDAY_MANDATORY_TAGS."
         ),
     )
+    parser.add_argument(
+        "--subitem-mandatory-tags",
+        help=(
+            "Comma-separated 'Tag list=Subitem column title' pairs. A subitem uses "
+            "its own column when the tag it inherits is missing or a placeholder. "
+            "Overrides MONDAY_SUBITEM_MEANDATORY_TAGS/MONDAY_SUBITEM_MANDATORY_TAGS."
+        ),
+    )
+    parser.add_argument(
+        "--placeholder-tags",
+        help=(
+            "Comma-separated tag values that do not name one real value, so "
+            "subitems replace them with their own column. "
+            "Overrides MONDAY_PLACEHOLDER_TAGS."
+        ),
+    )
+    parser.add_argument(
+        "--output-with-done",
+        help=(
+            "Also write tasks including done items to this file, from the same "
+            "fetch. Use it for exports and time entry tags of finished work."
+        ),
+    )
 
     return parser.parse_args()
 
@@ -860,6 +1160,16 @@ def main():
             if column.strip()
         ]
 
+    subitem_mandatory_tag_columns = None
+    if args.subitem_mandatory_tags:
+        subitem_mandatory_tag_columns = parse_subitem_mandatory_tag_columns(
+            args.subitem_mandatory_tags
+        )
+
+    placeholder_tags = None
+    if args.placeholder_tags is not None:
+        placeholder_tags = parse_tag_values(args.placeholder_tags)
+
     print("Starting Monday.com data fetch...")
     print(f"Started at: {datetime.now()}")
 
@@ -868,9 +1178,18 @@ def main():
         include_done=args.include_done,
         include_archived_groups=args.include_archived_groups,
         mandatory_tag_columns=mandatory_tag_columns,
+        subitem_mandatory_tag_columns=subitem_mandatory_tag_columns,
+        placeholder_tags=placeholder_tags,
     )
-    data = fetcher.fetch_all_data()
+    task_sets = fetcher.fetch_task_sets()
+    data = task_sets.with_done if args.include_done else task_sets.active
     filename = fetcher.save_to_json(data, args.output)
+    if args.output_with_done:
+        with_done_filename = fetcher.save_to_json(task_sets.with_done, args.output_with_done)
+        print(
+            f"Tasks including done items saved to: {with_done_filename} "
+            f"({len(task_sets.with_done)} tasks)"
+        )
 
     boards = len([item for item in data if item["parent_id"] == 0])
     groups = len([

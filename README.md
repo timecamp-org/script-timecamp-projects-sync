@@ -247,9 +247,10 @@ uv run --with-requirements requirements.txt python sync_projects.py
 
 # Export TimeCamp totals back to Monday.com Time Tracked numbers columns.
 # Dry-run by default. Main rows are not updated because Monday should tally subitems.
-uv run --with-requirements requirements.txt python fetch_mondaycom.py
-uv run --with-requirements requirements.txt python export_monday_time_logged.py --from 2026-06-01 --to 2026-06-18 --column-title "Time Tracked"
-uv run --with-requirements requirements.txt python export_monday_time_logged.py --from 2026-06-01 --to 2026-06-18 --column-title "Time Tracked" --apply
+# tasks_with_done.json keeps done items, so their time is exported too.
+uv run --with-requirements requirements.txt python fetch_mondaycom.py --output-with-done tasks_with_done.json
+uv run --with-requirements requirements.txt python export_monday_time_logged.py --tasks-file tasks_with_done.json --from 2026-06-01 --to 2026-06-18 --column-title "Time Tracked"
+uv run --with-requirements requirements.txt python export_monday_time_logged.py --tasks-file tasks_with_done.json --from 2026-06-01 --to 2026-06-18 --column-title "Time Tracked" --apply
 
 # Only use this if main rows should be overwritten by the exporter too.
 uv run --with-requirements requirements.txt python export_monday_time_logged.py --from 2026-06-01 --to 2026-06-18 --column-title "Time Tracked" --include-main-rows
@@ -330,6 +331,9 @@ uv run --env-file .env --with-requirements requirements.txt python helpers/unass
 # Fill missing mandatory tags from tasks.json on time entries for all account users
 uv run --env-file .env --with-requirements requirements.txt python helpers/assign_mandatory_tags_to_time_entries.py --from 2026-06-01 --to 2026-06-05 --dry-run
 uv run --env-file .env --with-requirements requirements.txt python helpers/assign_mandatory_tags_to_time_entries.py --from 2026-06-01 --to 2026-06-05
+
+# Also replace tags that differ from the tags the task needs now (dry-run first)
+uv run --env-file .env --with-requirements requirements.txt python helpers/assign_mandatory_tags_to_time_entries.py --from 2026-06-01 --to 2026-06-05 --replace-mismatched --dry-run
 ```
 
 The unassignment helper requires `TIMECAMP_API_TOKEN` and accepts `--task-ids`

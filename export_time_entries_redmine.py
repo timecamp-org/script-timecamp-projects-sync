@@ -1,7 +1,7 @@
 import requests
 import sys
 from dotenv import dotenv_values
-from datetime import datetime, timedelta
+from datetime import datetime
 from redminelib import Redmine as RedmineLib
 
 def read_dotenv() -> dict:

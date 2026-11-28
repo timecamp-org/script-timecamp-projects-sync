@@ -4,7 +4,8 @@ import argparse
 import json
 import os
 import sys
-from dataclasses import dataclass
+from collections import Counter
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -30,7 +31,23 @@ class Summary:
     no_resolved_mandatory_tags_for_task: int = 0
     already_tagged: int = 0
     updated: int = 0
+    replaced: int = 0
+    kept_other_tags: int = 0
+    locked: int = 0
     failed: int = 0
+    changes: Counter = field(default_factory=Counter)
+    change_seconds: Counter = field(default_factory=Counter)
+
+
+@dataclass(frozen=True)
+class EntryTagChange:
+    tags_to_add: Tuple[RequiredTag, ...]
+    tag_ids_to_remove: Tuple[int, ...]
+    removed_tag_names: Tuple[str, ...]
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.tags_to_add and not self.tag_ids_to_remove
 
 
 def parse_args() -> argparse.Namespace:
@@ -71,6 +88,24 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         dest="dry_run",
         help="Print changes without updating TimeCamp.",
+    )
+    parser.add_argument(
+        "--replace-mismatched",
+        action="store_true",
+        help=(
+            "Also replace tags from a mandatory tag list that differ from the "
+            "required tags. Without it, entries that already have any tag from "
+            "the list are left as they are."
+        ),
+    )
+    parser.add_argument(
+        "--replaceable-tags",
+        help=(
+            "With --replace-mismatched: comma-separated tag names that may be "
+            "replaced, for example placeholder values. An entry that has any "
+            "other mismatched tag from the list is left as it is. Without this "
+            "option every mismatched tag is replaced."
+        ),
     )
     return parser.parse_args()
 
@@ -120,7 +155,8 @@ def main() -> int:
             return 1
 
         print(f"Loaded {len(user_ids)} TimeCamp user(s).")
-        timecamp_tasks = client.get_tasks()
+        # Archived tasks keep their time entries, so their entries need tags too.
+        timecamp_tasks = client.get_tasks(include_archived=True)
         tag_definitions = load_tag_definitions(client, source_tasks, args.dry_run)
         required_tags_by_task_id = build_required_tags_by_timecamp_task_id(
             source_tasks=source_tasks,
@@ -150,6 +186,8 @@ def main() -> int:
         required_tags_by_task_id=required_tags_by_task_id,
         tag_lists_by_id=tag_lists_by_id,
         dry_run=args.dry_run,
+        replace_mismatched=args.replace_mismatched,
+        replaceable_tag_names=parse_tag_name_list(args.replaceable_tags),
     )
 
     print("\nSummary:")
@@ -159,8 +197,21 @@ def main() -> int:
         "- Entries whose task has no resolved mandatory tags from "
         f"{args.tasks_file}: {summary.no_resolved_mandatory_tags_for_task}"
     )
-    print(f"- Already had required tag list(s): {summary.already_tagged}")
+    print(f"- Already had required tag(s): {summary.already_tagged}")
     print(f"- {'Would update' if args.dry_run else 'Updated'}: {summary.updated}")
+    if args.replace_mismatched:
+        print(
+            f"- {'Would replace' if args.dry_run else 'Replaced'} mismatched tags on: "
+            f"{summary.replaced}"
+        )
+    if summary.kept_other_tags:
+        print(
+            "- Kept entries with a mismatched tag that is not replaceable: "
+            f"{summary.kept_other_tags}"
+        )
+    if summary.locked:
+        print(f"- Skipped locked entries that need a change: {summary.locked}")
+    print_change_summary(summary, dry_run=args.dry_run)
     if summary.failed:
         print(f"- Failed: {summary.failed}")
         return 1
@@ -254,16 +305,19 @@ def build_required_tags_by_timecamp_task_id(
     tag_definitions: Dict[Tuple[str, str], Tuple[int, int]],
 ) -> Dict[int, List[RequiredTag]]:
     source_external_ids = {get_source_external_task_id(task) for task in source_tasks}
-    timecamp_tasks_by_external_id = {
-        str(task.get("external_task_id")): task
-        for task in timecamp_tasks
-        if task.get("external_task_id")
-        and (
-            str(task.get("external_task_id")).startswith("sync_")
-            or str(task.get("external_task_id")) in source_external_ids
-        )
-    }
+    timecamp_tasks_by_external_id: Dict[str, List[Dict[str, Any]]] = {}
+    for task in timecamp_tasks:
+        external_task_id = str(task.get("external_task_id") or "")
+        if not external_task_id:
+            continue
+        if (
+            external_task_id.startswith("sync_")
+            or external_task_id in source_external_ids
+        ):
+            timecamp_tasks_by_external_id.setdefault(external_task_id, []).append(task)
+
     required_tags_by_task_id: Dict[int, List[RequiredTag]] = {}
+    missing_timecamp_tasks: List[str] = []
     source_tasks_by_task_id = {
         str(task.get("task_id")): task for task in source_tasks if task.get("task_id")
     }
@@ -279,17 +333,19 @@ def build_required_tags_by_timecamp_task_id(
             continue
 
         external_task_id = get_source_external_task_id(source_task)
-        timecamp_task = timecamp_tasks_by_external_id.get(external_task_id)
-        if not timecamp_task:
-            print(
-                "Warning: TimeCamp task not found for "
+        timecamp_task_ids = [
+            task_id
+            for task_id in (
+                normalize_int(timecamp_task.get("task_id"))
+                for timecamp_task in timecamp_tasks_by_external_id.get(external_task_id, [])
+            )
+            if task_id is not None
+        ]
+        if not timecamp_task_ids:
+            missing_timecamp_tasks.append(
                 f"{source_task.get('name', '(unnamed task)')} "
                 f"(external_task_id={external_task_id})"
             )
-            continue
-
-        timecamp_task_id = normalize_int(timecamp_task.get("task_id"))
-        if timecamp_task_id is None:
             continue
 
         required_tags: List[RequiredTag] = []
@@ -318,7 +374,15 @@ def build_required_tags_by_timecamp_task_id(
                 seen_tag_ids.add(tag_id)
 
         if required_tags:
-            required_tags_by_task_id[timecamp_task_id] = required_tags
+            for timecamp_task_id in timecamp_task_ids:
+                required_tags_by_task_id[timecamp_task_id] = required_tags
+
+    if missing_timecamp_tasks:
+        print(
+            "Warning: no TimeCamp task found for "
+            f"{len(missing_timecamp_tasks)} source task(s) with mandatory tags, e.g. "
+            + "; ".join(missing_timecamp_tasks[:5])
+        )
 
     print(
         "Resolved mandatory tags from tasks.json for "
@@ -441,8 +505,15 @@ def assign_missing_mandatory_tags(
     required_tags_by_task_id: Dict[int, List[RequiredTag]],
     tag_lists_by_id: Dict[int, str],
     dry_run: bool,
+    replace_mismatched: bool = False,
+    replaceable_tag_names: Optional[List[str]] = None,
 ) -> Summary:
     summary = Summary()
+    replaceable_keys = (
+        {normalize_key(name) for name in replaceable_tag_names}
+        if replaceable_tag_names
+        else None
+    )
 
     for entry in entries:
         summary.scanned += 1
@@ -462,34 +533,188 @@ def assign_missing_mandatory_tags(
         if not isinstance(entry_tags, list):
             entry_tags = load_entry_tags(client, entry_id)
 
-        missing_tags = [
-            required_tag
-            for required_tag in required_tags
-            if not has_tag_from_list(entry_tags, required_tag, tag_lists_by_id)
-        ]
-        if not missing_tags:
+        change = plan_entry_tag_change(
+            entry_tags,
+            required_tags,
+            tag_lists_by_id,
+            replace_mismatched=replace_mismatched,
+        )
+        if change.is_empty:
             summary.already_tagged += 1
             continue
 
-        action = "Would assign" if dry_run else "Assigning"
-        readable_tags = ", ".join(
-            f"{tag.tag_list_name}={tag.tag_name} ({tag.tag_id})"
-            for tag in missing_tags
-        )
-        print(f"  - Entry {entry_id}: {action} {readable_tags}")
+        if replaceable_keys is not None and any(
+            normalize_key(name) not in replaceable_keys
+            for name in change.removed_tag_names
+        ):
+            summary.kept_other_tags += 1
+            continue
+
+        if is_truthy(entry.get("locked")):
+            summary.locked += 1
+            print(f"  - Entry {entry_id}: locked, skipped {describe_change(change)}")
+            continue
+
+        action = "Would change" if dry_run else "Changing"
+        print(f"  - Entry {entry_id}: {action} {describe_change(change)}")
+        record_change(summary, entry, change)
 
         if dry_run:
-            summary.updated += 1
+            count_change(summary, change)
             continue
 
         try:
-            client.add_tags_to_entry(entry_id, [tag.tag_id for tag in missing_tags])
-            summary.updated += 1
+            if change.tags_to_add:
+                added_tag_ids = client.add_tags_to_entry(
+                    entry_id,
+                    [tag.tag_id for tag in change.tags_to_add],
+                )
+                not_added = get_not_added_tag_ids(change, added_tag_ids)
+                if not_added:
+                    # TimeCamp silently skips tags the entry's task does not allow.
+                    # Keep the old tag so the entry is never left without one.
+                    summary.failed += 1
+                    print(
+                        "    Error: TimeCamp did not add tag(s) "
+                        f"{', '.join(str(tag_id) for tag_id in not_added)}; "
+                        "is the tag allowed on the task? Old tags kept."
+                    )
+                    continue
+            # Remove only after the new tag is on the entry.
+            if change.tag_ids_to_remove:
+                client.remove_tags_from_entry(entry_id, list(change.tag_ids_to_remove))
+            count_change(summary, change)
         except Exception as exc:
             summary.failed += 1
             print(f"    Error: {exc}")
 
     return summary
+
+
+def parse_tag_name_list(raw_value: Optional[str]) -> Optional[List[str]]:
+    if raw_value is None:
+        return None
+
+    return [name.strip() for name in raw_value.split(",") if name.strip()]
+
+
+def get_not_added_tag_ids(change: EntryTagChange, added_tag_ids: Any) -> List[int]:
+    """Return requested tag ids missing from the add-tags response."""
+    if not isinstance(added_tag_ids, list):
+        return [tag.tag_id for tag in change.tags_to_add]
+
+    confirmed_ids = {normalize_int(tag_id) for tag_id in added_tag_ids}
+    return [
+        tag.tag_id
+        for tag in change.tags_to_add
+        if tag.tag_id not in confirmed_ids
+    ]
+
+
+def plan_entry_tag_change(
+    entry_tags: List[Dict[str, Any]],
+    required_tags: List[RequiredTag],
+    tag_lists_by_id: Dict[int, str],
+    replace_mismatched: bool = False,
+) -> EntryTagChange:
+    """Return the tags to add, and with replace_mismatched the tags to remove."""
+    if not replace_mismatched:
+        return EntryTagChange(
+            tags_to_add=tuple(
+                required_tag
+                for required_tag in required_tags
+                if not has_tag_from_list(entry_tags, required_tag, tag_lists_by_id)
+            ),
+            tag_ids_to_remove=(),
+            removed_tag_names=(),
+        )
+
+    entry_tag_ids = {
+        tag_id
+        for tag_id in (get_entry_tag_id(tag) for tag in entry_tags)
+        if tag_id is not None
+    }
+    required_tag_ids = {required_tag.tag_id for required_tag in required_tags}
+    tags_to_add = tuple(
+        required_tag
+        for required_tag in required_tags
+        if required_tag.tag_id not in entry_tag_ids
+    )
+
+    tag_ids_to_remove: List[int] = []
+    removed_tag_names: List[str] = []
+    for tag in entry_tags:
+        tag_id = get_entry_tag_id(tag)
+        if tag_id is None or tag_id in required_tag_ids or tag_id in tag_ids_to_remove:
+            continue
+        if any(
+            is_tag_from_list(tag, required_tag, tag_lists_by_id)
+            for required_tag in required_tags
+        ):
+            tag_ids_to_remove.append(tag_id)
+            removed_tag_names.append(str(tag.get("name") or tag_id))
+
+    return EntryTagChange(
+        tags_to_add=tags_to_add,
+        tag_ids_to_remove=tuple(tag_ids_to_remove),
+        removed_tag_names=tuple(removed_tag_names),
+    )
+
+
+def describe_change(change: EntryTagChange) -> str:
+    parts = []
+    if change.tags_to_add:
+        parts.append(
+            "add "
+            + ", ".join(
+                f"{tag.tag_list_name}={tag.tag_name} ({tag.tag_id})"
+                for tag in change.tags_to_add
+            )
+        )
+    if change.tag_ids_to_remove:
+        parts.append(
+            "remove "
+            + ", ".join(
+                f"{name} ({tag_id})"
+                for name, tag_id in zip(
+                    change.removed_tag_names,
+                    change.tag_ids_to_remove,
+                    strict=True,
+                )
+            )
+        )
+    return "; ".join(parts)
+
+
+def record_change(summary: Summary, entry: Dict[str, Any], change: EntryTagChange) -> None:
+    key = (
+        ", ".join(change.removed_tag_names) or "(none)",
+        ", ".join(tag.tag_name for tag in change.tags_to_add) or "(none)",
+    )
+    summary.changes[key] += 1
+    summary.change_seconds[key] += normalize_int(entry.get("duration")) or 0
+
+
+def count_change(summary: Summary, change: EntryTagChange) -> None:
+    if change.tag_ids_to_remove:
+        summary.replaced += 1
+    else:
+        summary.updated += 1
+
+
+def print_change_summary(summary: Summary, dry_run: bool, limit: int = 40) -> None:
+    if not summary.changes:
+        return
+
+    print(f"- {'Planned' if dry_run else 'Applied'} changes (removed -> added):")
+    for (removed, added), count in sorted(
+        summary.changes.items(),
+        key=lambda item: (-summary.change_seconds[item[0]], item[0]),
+    )[:limit]:
+        hours = summary.change_seconds[(removed, added)] / 3600
+        print(f"  - {removed} -> {added}: {count} entries, {hours:.1f}h")
+    if len(summary.changes) > limit:
+        print(f"  - ... and {len(summary.changes) - limit} more change type(s)")
 
 
 def load_entry_tags(client: Any, entry_id: Any) -> List[Dict[str, Any]]:
@@ -505,22 +730,35 @@ def has_tag_from_list(
     required_tag: RequiredTag,
     tag_lists_by_id: Dict[int, str],
 ) -> bool:
-    required_tag_list_key = normalize_key(required_tag.tag_list_name)
+    return any(
+        is_tag_from_list(tag, required_tag, tag_lists_by_id)
+        for tag in entry_tags
+    )
 
-    for tag in entry_tags:
-        tag_list_id = normalize_int(tag.get("tagListId") or tag.get("tag_list_id"))
-        if tag_list_id == required_tag.tag_list_id:
-            return True
 
-        tag_list_name = (
-            tag.get("tagListName")
-            or tag.get("tag_list_name")
-            or (tag_lists_by_id.get(tag_list_id) if tag_list_id is not None else None)
-        )
-        if normalize_key(tag_list_name) == required_tag_list_key:
-            return True
+def is_tag_from_list(
+    tag: Dict[str, Any],
+    required_tag: RequiredTag,
+    tag_lists_by_id: Dict[int, str],
+) -> bool:
+    tag_list_id = normalize_int(tag.get("tagListId") or tag.get("tag_list_id"))
+    if tag_list_id == required_tag.tag_list_id:
+        return True
 
-    return False
+    tag_list_name = (
+        tag.get("tagListName")
+        or tag.get("tag_list_name")
+        or (tag_lists_by_id.get(tag_list_id) if tag_list_id is not None else None)
+    )
+    return normalize_key(tag_list_name) == normalize_key(required_tag.tag_list_name)
+
+
+def get_entry_tag_id(tag: Dict[str, Any]) -> Optional[int]:
+    return normalize_int(tag.get("tagId") or tag.get("tag_id") or tag.get("id"))
+
+
+def is_truthy(value: Any) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes"}
 
 
 def normalize_int(value: Any) -> Optional[int]:

@@ -78,7 +78,7 @@ def create_timecamp_task(name, project_id, task_id):
     return response.json()
 
 def archive_timecamp_project(task_id):
-    url = f"https://app.timecamp.com/third_party/api/tasks"
+    url = "https://app.timecamp.com/third_party/api/tasks"
     headers = {
         'Accept': 'application/json',
         'Authorization': f'Bearer {TIMECAMP_API_TOKEN}',
@@ -142,7 +142,7 @@ def sync_projects_and_tasks():
     # Archive TimeCamp tasks that are not open in Redmine
     for timecamp_task in timecamp_tasks.values():
         # print(timecamp_task)
-        if (timecamp_task['external_task_id'].startswith(f'redmine_task_') and
+        if (timecamp_task['external_task_id'].startswith('redmine_task_') and
             timecamp_task['external_task_id'] not in open_redmine_task_ids and
             not timecamp_task.get('archived')):
             print(f"Archiving TimeCamp task: {timecamp_task['name']}")

@@ -456,7 +456,8 @@ def main() -> None:
     monday_client = MondayClient(monday_token)
 
     print("Loading TimeCamp tasks and entries...")
-    timecamp_tasks = timecamp_client.get_tasks()
+    # Finished Monday items are archived in TimeCamp, but their time still counts.
+    timecamp_tasks = timecamp_client.get_tasks(include_archived=True)
     entries = timecamp_client.get_time_entries(args.from_date, args.to_date)
 
     seconds_by_source_task, entry_skips = aggregate_entries_by_source_task(

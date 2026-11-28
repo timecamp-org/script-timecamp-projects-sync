@@ -6,10 +6,14 @@ from unittest.mock import patch
 from fetch_mondaycom import (
     MondayClient,
     MondayFetcher,
+    apply_subitem_mandatory_tags,
     expand_ignored_user_assigned_board_ids,
     get_done_status_column,
     load_done_status_columns_from_env,
     load_ignored_user_assigned_board_ids_from_env,
+    load_placeholder_tags_from_env,
+    load_subitem_mandatory_tag_columns_from_env,
+    parse_subitem_mandatory_tag_columns,
 )
 
 
@@ -138,7 +142,7 @@ def status_item(item_id, statuses, parent_item_id=None):
     }
 
 
-def traffic_studio_boards():
+def status_boards():
     """Column layout of the Example Board board and its subitem board."""
     main_board = {
         "id": "100",
@@ -294,7 +298,7 @@ class FetchMondayDoneStatusTest(unittest.TestCase):
                 include_done=include_done,
                 done_status_columns=done_status_columns,
             )
-        fetcher.client = FakeMondayClient(traffic_studio_boards())
+        fetcher.client = FakeMondayClient(status_boards())
 
         return {
             task["task_id"]
@@ -387,6 +391,170 @@ class FetchMondayDoneStatusTest(unittest.TestCase):
                 load_done_status_columns_from_env(),
                 ["Item Status", "Phase"],
             )
+
+
+CLIENT_COLUMN = {"id": "client", "title": "Client", "type": "dropdown", "settings_str": "{}"}
+BRAND_COLUMN = {"id": "brand", "title": "Brand", "type": "dropdown", "settings_str": "{}"}
+
+
+def tagged_item(item_id, column_id, text, status=0, parent_item_id=None):
+    return {
+        "id": str(item_id),
+        "name": f"Item {item_id}",
+        "state": "active",
+        "group": {"id": "group1"},
+        "parent_item": {"id": str(parent_item_id)} if parent_item_id else None,
+        "column_values": [
+            {"id": column_id, "type": "dropdown", "text": text, "value": None},
+            status_column_value("status", status),
+        ],
+    }
+
+
+def client_brand_boards():
+    main_board = {
+        "id": "100",
+        "name": "Example Board",
+        "type": "board",
+        "groups": [{"id": "group1", "title": "Group", "archived": False}],
+        "columns": [
+            {
+                "id": "subtasks",
+                "title": "Subitems",
+                "type": "subtasks",
+                "settings_str": json.dumps({"boardIds": [200]}),
+            },
+            CLIENT_COLUMN,
+            ITEM_STATUS_COLUMN,
+        ],
+        "items_page": {
+            "items": [
+                tagged_item("1", "client", "All clients"),
+                tagged_item("2", "client", "Client A", status=1),
+                tagged_item("3", "client", "Client B"),
+                tagged_item("4", "client", "Client A"),
+            ]
+        },
+    }
+    subitems_board = {
+        "id": "200",
+        "name": "Subitems of Example Board",
+        "type": "sub_items_board",
+        "groups": [],
+        "columns": [BRAND_COLUMN, ITEM_STATUS_COLUMN],
+        "items_page": {
+            "items": [
+                tagged_item("11", "brand", "Brand A", parent_item_id="1"),
+                tagged_item("12", "brand", "Brand B", parent_item_id="1"),
+                tagged_item("13", "brand", "All clients", parent_item_id="1"),
+                tagged_item("14", "brand", "Brand C", parent_item_id="1"),
+                tagged_item("15", "brand", "Brand A", status=1, parent_item_id="1"),
+                tagged_item("21", "brand", "Brand A", parent_item_id="2"),
+                tagged_item("31", "brand", "brand b", parent_item_id="3"),
+                tagged_item("32", "brand", "Brand B", parent_item_id="3"),
+                tagged_item("41", "brand", "Brand B", parent_item_id="4"),
+            ]
+        },
+    }
+    return {"100": main_board, "200": subitems_board}
+
+
+class FetchMondaySubitemMandatoryTagsTest(unittest.TestCase):
+    def fetch_task_sets(self, subitem_columns=None, placeholder_tags=("All clients",)):
+        with patch.dict(os.environ, {"MONDAY_API_TOKEN": "token"}, clear=False):
+            fetcher = MondayFetcher(
+                board_ids=["100"],
+                mandatory_tag_columns=["Client"],
+                done_status_columns=["Item Status"],
+                subitem_mandatory_tag_columns=(
+                    {"Client": "Brand"} if subitem_columns is None else subitem_columns
+                ),
+                placeholder_tags=placeholder_tags,
+            )
+        fetcher.client = FakeMondayClient(client_brand_boards())
+        return fetcher, fetcher.fetch_task_sets()
+
+    def test_subitems_under_placeholder_use_mapped_column_value(self):
+        fetcher, task_sets = self.fetch_task_sets()
+        tasks = {task["task_id"]: task for task in task_sets.with_done}
+
+        # Brand A appears only under Client A (on a done row), Brand B mostly under Client B.
+        self.assertEqual(tasks["monday_11"]["meandatory_tags"], {"Client": ["Client A"]})
+        self.assertEqual(tasks["monday_12"]["meandatory_tags"], {"Client": ["Client B"]})
+        self.assertEqual(tasks["monday_15"]["meandatory_tags"], {"Client": ["Client A"]})
+        # No real tag value for Brand C anywhere, so the column value itself is used.
+        self.assertEqual(tasks["monday_14"]["meandatory_tags"], {"Client": ["Brand C"]})
+        self.assertEqual(fetcher.subitem_tag_result.assigned, 4)
+        self.assertEqual(fetcher.subitem_tag_result.mapped, 3)
+
+    def test_subitems_keep_real_inherited_tag_and_placeholder_column_value(self):
+        _, task_sets = self.fetch_task_sets()
+        tasks = {task["task_id"]: task for task in task_sets.with_done}
+
+        for task_id in ("monday_13", "monday_21", "monday_31", "monday_32", "monday_41"):
+            self.assertNotIn("meandatory_tags", tasks[task_id], task_id)
+        self.assertEqual(tasks["monday_1"]["meandatory_tags"], {"Client": ["All clients"]})
+
+    def test_task_sets_split_done_items_from_one_fetch(self):
+        fetcher, task_sets = self.fetch_task_sets()
+        active_ids = {task["task_id"] for task in task_sets.active}
+        with_done_ids = {task["task_id"] for task in task_sets.with_done}
+
+        self.assertEqual(with_done_ids - active_ids, {"monday_2", "monday_15"})
+        self.assertEqual(len(fetcher.client.get_boards_calls), 2)
+        self.assertEqual(
+            {task["task_id"] for task in fetcher.fetch_all_data()},
+            active_ids,
+        )
+
+    def test_without_subitem_columns_nothing_changes(self):
+        fetcher, task_sets = self.fetch_task_sets(subitem_columns={})
+        tasks = {task["task_id"]: task for task in task_sets.with_done}
+
+        self.assertNotIn("meandatory_tags", tasks["monday_11"])
+        self.assertEqual(fetcher.subitem_tag_result.assigned, 0)
+
+    def test_without_placeholders_only_untagged_parents_are_filled(self):
+        tasks = [
+            {"task_id": "monday_1", "parent_id": 0, "meandatory_tags": {"Client": ["All clients"]}},
+            {"task_id": "monday_2", "parent_id": 0},
+            {"task_id": "monday_11", "parent_id": "monday_1"},
+            {"task_id": "monday_21", "parent_id": "monday_2"},
+        ]
+
+        result = apply_subitem_mandatory_tags(
+            tasks,
+            {
+                "monday_11": {"Client": ["Brand B"]},
+                "monday_21": {"Client": ["Brand A"]},
+            },
+            placeholder_tags=[],
+        )
+
+        self.assertNotIn("meandatory_tags", tasks[2])
+        self.assertEqual(tasks[3]["meandatory_tags"], {"Client": ["Brand A"]})
+        self.assertEqual(result.assigned, 1)
+
+    def test_parse_subitem_mandatory_tag_columns(self):
+        self.assertEqual(
+            parse_subitem_mandatory_tag_columns(" Client = Brand , Team=Squad,"),
+            {"Client": "Brand", "Team": "Squad"},
+        )
+        self.assertEqual(parse_subitem_mandatory_tag_columns(""), {})
+        with self.assertRaises(ValueError):
+            parse_subitem_mandatory_tag_columns("Client")
+
+    def test_load_subitem_settings_from_env(self):
+        with patch.dict(
+            os.environ,
+            {
+                "MONDAY_SUBITEM_MEANDATORY_TAGS": "Client=Brand",
+                "MONDAY_PLACEHOLDER_TAGS": "All clients, Internal",
+            },
+            clear=False,
+        ):
+            self.assertEqual(load_subitem_mandatory_tag_columns_from_env(), {"Client": "Brand"})
+            self.assertEqual(load_placeholder_tags_from_env(), ["All clients", "Internal"])
 
 
 if __name__ == "__main__":

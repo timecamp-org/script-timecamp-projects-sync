@@ -450,7 +450,7 @@ def main():
     # Show structure preview
     if data:
         print("\nStructure preview:")
-        for i, item in enumerate(data[:15]):
+        for item in data[:15]:
             # Determine indentation based on hierarchy level
             if item['parent_id'] == 0:
                 indent = ""

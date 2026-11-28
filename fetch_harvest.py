@@ -117,13 +117,13 @@ def main():
     clients = len([d for d in data if d["parent_id"] == 0])
     projects = len(data) - clients
 
-    print(f"\nSummary:")
+    print("\nSummary:")
     print(f"  Clients: {clients}")
     print(f"  Projects: {projects}")
     print(f"  Total items: {len(data)}")
 
     if data:
-        print(f"\nStructure preview:")
+        print("\nStructure preview:")
         for item in data[:20]:
             indent = "" if item["parent_id"] == 0 else "  "
             level = "[CLIENT]" if item["parent_id"] == 0 else "[PROJECT]"

@@ -499,6 +499,17 @@ class TimeCampClient:
             json={"tags": ",".join(str(tag_id) for tag_id in tag_ids)},
         )
 
+    def remove_tags_from_entry(
+        self,
+        entry_id: Any,
+        tag_ids: List[int],
+    ) -> Any:
+        return self._request(
+            "DELETE",
+            f"entries/{entry_id}/tags",
+            json={"tags": ",".join(str(tag_id) for tag_id in tag_ids)},
+        )
+
     def update_time_entry_task(self, entry_id: Any, task_id: Any) -> Any:
         return self._request(
             "PUT",
